@@ -1,4 +1,5 @@
 const path = require('path')
+const CopyWebpackPlugin = require('copy-webpack-plugin')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 
 module.exports = {
@@ -16,6 +17,9 @@ module.exports = {
       template: './src/ui.html',
       filename: 'ui.html',
       inject: false,
+    }),
+    new CopyWebpackPlugin({
+      patterns: [{ from: 'src/ui.css', to: 'ui.css' }],
     }),
   ],
 }

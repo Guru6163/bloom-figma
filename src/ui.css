@@ -1,0 +1,648 @@
+/**
+ * Bloom plugin UI — loaded from dist/ui.html as ui.css (copied from src/ui.css at build time).
+ */
+
+/* =============================================================================
+   Design tokens
+   ============================================================================= */
+:root {
+  --bg: #f5eefc;
+  --bg-elevated: #ffffff;
+  --card: #f2e8fb;
+  --card-hover: #ecdff9;
+  --border: #e5d4f7;
+  --accent: #7b2cbf;
+  --accent-hover: #651aad;
+  --text: #2a1747;
+  --muted: #6f5d89;
+  --radius: 12px;
+  --error: #d13b66;
+  --success: #0e9f6e;
+  --shadow-sm: 0 1px 2px rgba(42, 23, 71, 0.06);
+  --shadow-md: 0 4px 14px rgba(123, 44, 191, 0.12);
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* =============================================================================
+   Base layout
+   ============================================================================= */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* App shell: stacks header + scrollable stage */
+.app {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.app-header {
+  flex-shrink: 0;
+  padding: 14px 16px 10px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.app-header__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.app-header__subtitle {
+  margin: 2px 0 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.app-stage {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 20px;
+}
+
+/* Views: only one visible at a time (toggled via JS in a later step) */
+.view {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 100%;
+}
+
+.view__title {
+  margin: 0 0 2px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.view__lead {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 36em;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input {
+  padding: 10px 12px;
+}
+
+.textarea {
+  min-height: 120px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.input:focus,
+.textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(123, 44, 191, 0.18);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+/* =============================================================================
+   Buttons
+   ============================================================================= */
+.btn-primary,
+.btn-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn-primary:active,
+.btn-secondary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow-md);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  background: var(--bg-elevated);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--card);
+  border-color: var(--accent);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* =============================================================================
+   Brand selection cards
+   ============================================================================= */
+.brand-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.brand-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.brand-card:hover {
+  background: var(--card-hover);
+  border-color: rgba(123, 44, 191, 0.35);
+  box-shadow: var(--shadow-sm);
+}
+
+.brand-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.brand-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.brand-card__url {
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.brand-card__meta {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+/* Selected state (JS will toggle in a later step) */
+.brand-card.is-selected {
+  border-color: var(--accent);
+  background: var(--card-hover);
+  box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.2);
+}
+
+/* =============================================================================
+   Aspect ratio pills
+   ============================================================================= */
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  min-width: 52px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pill.is-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* =============================================================================
+   Variant count buttons
+   ============================================================================= */
+.variant-row {
+  display: flex;
+  gap: 8px;
+}
+
+.variant-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.variant-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.variant-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.variant-btn.is-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* =============================================================================
+   Results grid & image cells
+   ============================================================================= */
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.image-cell {
+  position: relative;
+  border-radius: var(--radius);
+  border: 2px solid transparent;
+  background: var(--card);
+  overflow: hidden;
+  cursor: pointer;
+  aspect-ratio: 1;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+.image-cell:hover {
+  border-color: rgba(123, 44, 191, 0.35);
+  box-shadow: var(--shadow-sm);
+}
+
+.image-cell.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.25);
+}
+
+.image-cell__thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: linear-gradient(135deg, var(--card-hover), var(--border));
+}
+
+.image-cell__badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+
+/* =============================================================================
+   Generating view: spinner, skeleton, progress
+   ============================================================================= */
+.generating-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 24px 8px 8px;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.skeleton {
+  border-radius: var(--radius);
+  background: linear-gradient(
+    90deg,
+    var(--card) 0%,
+    var(--card-hover) 50%,
+    var(--card) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.skeleton-block {
+  height: 72px;
+  width: 100%;
+}
+
+.progress-wrap {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.progress-wrap__label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.progress-wrap__track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-wrap__fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #9d4edd);
+  transition: width 0.25s ease;
+}
+
+/* Static demo width for shell preview; JS will drive width later */
+#generating .progress-wrap__fill {
+  width: 42%;
+}
+
+/* =============================================================================
+   Toast (bottom notification)
+   ============================================================================= */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--text);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 50;
+}
+
+.toast.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.toast--error {
+  background: var(--error);
+}
+
+.toast--success {
+  background: var(--success);
+}
+
+/* =============================================================================
+   Full-size image zoom overlay
+   ============================================================================= */
+.zoom-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(42, 23, 71, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.zoom-overlay.is-open {
+  display: flex;
+}
+
+.zoom-overlay__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+}
+
+.zoom-overlay__close:hover {
+  background: var(--card);
+}
+
+.zoom-overlay__frame {
+  max-width: 100%;
+  max-height: calc(100% - 32px);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  background: var(--bg-elevated);
+}
+
+.zoom-overlay__img {
+  display: block;
+  max-width: 100%;
+  max-height: 72vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+/* =============================================================================
+   Utility
+   ============================================================================= */
+.hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.tight-title {
+  margin: 0;
+}
+
+.tight-lead {
+  margin-top: 6px;
+}

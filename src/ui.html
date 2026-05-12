@@ -1,10 +1,213 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bloom</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="ui.css" />
 </head>
 <body>
-  <p>Bloom plugin loading...</p>
+  <div class="app">
+    <header class="app-header">
+      <h1 class="app-header__title">Bloom</h1>
+      <p class="app-header__subtitle">On-brand images in Figma</p>
+    </header>
+
+    <main class="app-stage" id="app-stage">
+      <!-- 1. API key setup -->
+      <section id="setup" class="view" aria-labelledby="setup-title">
+        <div>
+          <h2 id="setup-title" class="view__title">Connect your account</h2>
+          <p class="view__lead">Paste your Bloom API key. It is stored only in this plugin via Figma client storage.</p>
+        </div>
+        <div class="field">
+          <label class="field__label" for="api-key-input">API key</label>
+          <input
+            id="api-key-input"
+            class="input"
+            type="password"
+            name="bloom_api_key"
+            autocomplete="off"
+            placeholder="sk_live_…"
+            spellcheck="false"
+          />
+        </div>
+        <p class="hint">You can create and manage keys in your Bloom workspace.</p>
+        <div class="stack">
+          <button type="button" class="btn-primary">Save &amp; continue</button>
+        </div>
+      </section>
+
+      <!-- 2. Brand picker -->
+      <section id="brand-select" class="view" aria-labelledby="brand-title">
+        <div>
+          <h2 id="brand-title" class="view__title">Choose a brand</h2>
+          <p class="view__lead">Select which brand session to use for generation. Status updates when onboarding finishes.</p>
+        </div>
+        <div class="brand-list" role="list">
+          <button type="button" class="brand-card is-selected" role="listitem">
+            <span class="brand-card__name">Acme Co</span>
+            <span class="brand-card__url">https://acme.com</span>
+            <span class="brand-card__meta">Ready</span>
+          </button>
+          <button type="button" class="brand-card" role="listitem">
+            <span class="brand-card__name">Studio North</span>
+            <span class="brand-card__url">https://studionorth.example</span>
+            <span class="brand-card__meta">Analyzing</span>
+          </button>
+          <button type="button" class="brand-card" role="listitem">
+            <span class="brand-card__name">Bloom Marketing</span>
+            <span class="brand-card__url">https://instagram.com/bloom</span>
+            <span class="brand-card__meta">Logo required</span>
+          </button>
+        </div>
+        <div class="stack">
+          <button type="button" class="btn-primary">Continue</button>
+          <button type="button" class="btn-secondary">Back</button>
+        </div>
+      </section>
+
+      <!-- 3. Prompt & options -->
+      <section id="generator" class="view" aria-labelledby="gen-title">
+        <div>
+          <h2 id="gen-title" class="view__title">Generate</h2>
+          <p class="view__lead">Describe the image. Bloom applies your brand’s visual DNA automatically.</p>
+        </div>
+        <div class="field">
+          <label class="field__label" for="prompt-input">Prompt</label>
+          <textarea
+            id="prompt-input"
+            class="textarea"
+            name="prompt"
+            rows="5"
+            placeholder="e.g. Product hero shot of our water bottle on marble, soft daylight…"
+          ></textarea>
+        </div>
+        <div class="field">
+          <span class="field__label" id="ratio-label">Aspect ratio</span>
+          <div class="pill-row" role="group" aria-labelledby="ratio-label">
+            <button type="button" class="pill is-selected">1:1</button>
+            <button type="button" class="pill">4:5</button>
+            <button type="button" class="pill">9:16</button>
+            <button type="button" class="pill">16:9</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field__label" id="variant-label">Variants</span>
+          <div class="variant-row" role="group" aria-labelledby="variant-label">
+            <button type="button" class="variant-btn is-selected" aria-pressed="true">1</button>
+            <button type="button" class="variant-btn" aria-pressed="false">2</button>
+            <button type="button" class="variant-btn" aria-pressed="false">3</button>
+            <button type="button" class="variant-btn" aria-pressed="false">4</button>
+          </div>
+        </div>
+        <div class="stack">
+          <button type="button" class="btn-primary">Generate</button>
+          <button type="button" class="btn-secondary">Change brand</button>
+        </div>
+      </section>
+
+      <!-- 4. Loading / progress -->
+      <section id="generating" class="view" aria-labelledby="gen-loading-title" aria-busy="true">
+        <div class="generating-hero">
+          <div class="spinner" role="presentation" aria-hidden="true"></div>
+          <div>
+            <h2 id="gen-loading-title" class="view__title tight-title">Creating images…</h2>
+            <p class="view__lead tight-lead">This can take about a minute. You can keep working in Figma.</p>
+          </div>
+        </div>
+        <div class="skeleton skeleton-block" role="presentation" aria-hidden="true"></div>
+        <div class="progress-wrap">
+          <div class="progress-wrap__label">
+            <span>Progress</span>
+            <span class="progress-wrap__value">42%</span>
+          </div>
+          <div class="progress-wrap__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="42" aria-label="Generation progress">
+            <div class="progress-wrap__fill"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. Results -->
+      <section id="results" class="view" aria-labelledby="results-title">
+        <div>
+          <h2 id="results-title" class="view__title">Your images</h2>
+          <p class="view__lead">Tap an image to select it, then insert into Figma or open a full-size preview.</p>
+        </div>
+        <div class="results-grid" role="list">
+          <button type="button" class="image-cell is-selected" role="listitem" aria-pressed="true">
+            <span class="image-cell__badge">1:1</span>
+            <!-- JS will swap src for real Bloom URLs; SVG placeholder avoids broken-image icon -->
+            <img
+              class="image-cell__thumb"
+              alt="Generated variant 1"
+              width="400"
+              height="400"
+              decoding="async"
+              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
+            />
+          </button>
+          <button type="button" class="image-cell" role="listitem" aria-pressed="false">
+            <span class="image-cell__badge">1:1</span>
+            <img
+              class="image-cell__thumb"
+              alt="Generated variant 2"
+              width="400"
+              height="400"
+              decoding="async"
+              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
+            />
+          </button>
+          <button type="button" class="image-cell" role="listitem" aria-pressed="false">
+            <span class="image-cell__badge">1:1</span>
+            <img
+              class="image-cell__thumb"
+              alt="Generated variant 3"
+              width="400"
+              height="400"
+              decoding="async"
+              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
+            />
+          </button>
+          <button type="button" class="image-cell" role="listitem" aria-pressed="false">
+            <span class="image-cell__badge">1:1</span>
+            <img
+              class="image-cell__thumb"
+              alt="Generated variant 4"
+              width="400"
+              height="400"
+              decoding="async"
+              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
+            />
+          </button>
+        </div>
+        <div class="row-actions">
+          <button type="button" class="btn-primary">Insert selected</button>
+          <button type="button" class="btn-secondary">New generation</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toast: add .is-visible (+ optional .toast--error / .toast--success) via JS later -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Full-size preview: add .is-open to show; JS will set image src -->
+  <div id="zoom-overlay" class="zoom-overlay" aria-hidden="true">
+    <button type="button" class="zoom-overlay__close" aria-label="Close preview">×</button>
+    <figure class="zoom-overlay__frame">
+      <img
+        class="zoom-overlay__img"
+        alt="Full size preview"
+        width="1200"
+        height="1200"
+        decoding="async"
+        src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='1200'%3E%3Crect fill='%23f2e8fb' width='100%25' height='100%25'/%3E%3C/svg%3E"
+      />
+    </figure>
+  </div>
 </body>
 </html>
