@@ -19,6 +19,10 @@ import {
   effectiveImageGenStatus,
   type BloomBrand,
   type BloomImageRow,
+  type BloomImagesListData,
+  type BloomImageGenStatus,
+  type BloomImageSource,
+  type BloomImageActionType,
 } from './bloom-api-schema';
 
 export type {
@@ -30,6 +34,7 @@ export type {
   BloomImageSource,
   BloomImageActionType,
   BloomImageGenStatus,
+  BloomImagesListData,
 } from './bloom-api-schema';
 
 export { parseGetImageEnvelope, BloomApiParseError } from './bloom-api-schema';
@@ -194,6 +199,56 @@ export async function editImage(
   });
   const accepted = parseEditAcceptedEnvelope(body);
   return [accepted.id];
+}
+
+export interface ListImagesQuery {
+  ids?: string[];
+  workspaceId?: string;
+  brandSessionId?: string;
+  limit?: number;
+  cursor?: string;
+  source?: BloomImageSource;
+  status?: BloomImageGenStatus;
+  actionType?: BloomImageActionType;
+  includeUrls?: boolean;
+  wait?: boolean;
+  timeout?: number;
+}
+
+/**
+ * GET /images — cursor-based list. Pass `includeUrls: true` for signed download URLs on completed images.
+ */
+export async function listImages(apiKey: string, query: ListImagesQuery = {}): Promise<BloomImagesListData> {
+  const qs = new URLSearchParams();
+  if (query.ids?.length) {
+    qs.set('ids', query.ids.map((id) => String(id).trim()).filter(Boolean).join(','));
+  }
+  if (query.workspaceId && String(query.workspaceId).trim() !== '') {
+    qs.set('workspaceId', String(query.workspaceId).trim());
+  }
+  if (query.brandSessionId && String(query.brandSessionId).trim() !== '') {
+    qs.set('brandSessionId', String(query.brandSessionId).trim());
+  }
+  const limit = query.limit != null ? Math.min(100, Math.max(1, Math.floor(query.limit))) : 50;
+  qs.set('limit', String(limit));
+  if (query.cursor && String(query.cursor).trim() !== '') {
+    qs.set('cursor', String(query.cursor).trim());
+  }
+  if (query.source) qs.set('source', query.source);
+  if (query.status) qs.set('status', query.status);
+  if (query.actionType) qs.set('actionType', query.actionType);
+  if (query.includeUrls === true) {
+    qs.set('includeUrls', 'true');
+  }
+  if (query.wait === true) {
+    qs.set('wait', 'true');
+  }
+  if (query.timeout != null) {
+    qs.set('timeout', String(Math.min(295, Math.max(1, Math.floor(query.timeout)))));
+  }
+
+  const body = await bloomFetchOkJson(`/images?${qs.toString()}`, apiKey, { method: 'GET' });
+  return parseImagesListEnvelope(body);
 }
 
 /**

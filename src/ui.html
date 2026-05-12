@@ -10,11 +10,6 @@
 </head>
 <body>
   <div class="app">
-    <header class="app-header">
-      <h1 class="app-header__title">Bloom</h1>
-      <p class="app-header__subtitle">On-brand images in Figma</p>
-    </header>
-
     <main class="app-stage" id="app-stage">
       <!-- 1. API key setup -->
       <section id="setup" class="view" aria-labelledby="setup-title">
@@ -38,6 +33,7 @@
         <p class="hint">You can create and manage keys in your Bloom workspace.</p>
         <div class="stack">
           <button id="btn-setup-connect" type="button" class="btn-primary">Connect</button>
+          <button id="btn-setup-back" type="button" class="btn-secondary">Back</button>
         </div>
       </section>
 
@@ -110,7 +106,9 @@
         </div>
         <div class="stack">
           <button id="btn-generate" type="button" class="btn-primary" disabled>Generate</button>
+          <button id="btn-open-library" type="button" class="btn-secondary">Library</button>
           <button id="btn-change-brand" type="button" class="btn-secondary">Change brand</button>
+          <button id="btn-generator-back" type="button" class="btn-secondary">Back</button>
         </div>
       </section>
 
@@ -140,6 +138,7 @@
           </button>
           <button id="btn-new-generation" type="button" class="btn-secondary">New generation</button>
           <button id="btn-regenerate" type="button" class="btn-secondary">Regenerate</button>
+          <button id="btn-results-back" type="button" class="btn-secondary">Back</button>
         </div>
         <div class="field edit-field">
           <button id="btn-edit-toggle" type="button" class="btn-secondary" aria-expanded="false">Edit selected…</button>
@@ -154,6 +153,28 @@
             ></textarea>
             <button id="btn-apply-edit" type="button" class="btn-primary">Apply edit</button>
           </div>
+        </div>
+      </section>
+
+      <!-- 5b. Library — prior generated images (GET /images) -->
+      <section id="library" class="view" aria-labelledby="library-title">
+        <div>
+          <h2 id="library-title" class="view__title">Library</h2>
+          <p class="view__lead">Completed images generated for this brand. Select one, then insert into a frame or replace an image fill.</p>
+          <p id="library-error" class="field__error" role="alert" aria-live="polite"></p>
+        </div>
+        <div id="library-grid" class="results-grid" role="list"></div>
+        <div class="row-actions">
+          <button
+            id="btn-library-insert"
+            type="button"
+            class="btn-primary"
+            data-default-label="Insert selected"
+          >
+            Insert selected
+          </button>
+          <button id="btn-library-load-more" type="button" class="btn-secondary" disabled>Load more</button>
+          <button id="btn-library-back" type="button" class="btn-secondary">Back</button>
         </div>
       </section>
     </main>
@@ -228,6 +249,9 @@
         renderRatios();
         updateStyleRefUi();
         syncPromptUi();
+      }
+      if (id === 'library') {
+        void openLibraryView();
       }
     }
 
@@ -786,6 +810,42 @@
       });
     }
 
+    /**
+     * GET /images — one page of completed generated images for the Library view.
+     */
+    function listBrandCompletedImagesPage(apiKey, brandSessionId, cursorForRequest) {
+      var qs = new URLSearchParams();
+      qs.set('limit', '50');
+      qs.set('source', 'generated');
+      qs.set('status', 'completed');
+      qs.set('includeUrls', 'true');
+      if (brandSessionId && String(brandSessionId).trim() !== '') {
+        qs.set('brandSessionId', String(brandSessionId).trim());
+      }
+      if (cursorForRequest && String(cursorForRequest).trim() !== '') {
+        qs.set('cursor', String(cursorForRequest).trim());
+      }
+      return bloomFetch('/images?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
+        return parseImagesListEnvelopeUi(raw);
+      });
+    }
+
+    function mapListRowToLibraryItem(row) {
+      var rawUrl = row.imageUrl;
+      var imageUrl = rawUrl != null && rawUrl !== '' ? getImageUrl(String(rawUrl)) : '';
+      var ar = row.aspectRatio;
+      var aspectRatio = ar && typeof ar === 'string' ? ar : '1:1';
+      var promptText = row.prompt && String(row.prompt).trim() ? String(row.prompt).trim() : '';
+      var desc = row.description && String(row.description).trim() ? String(row.description).trim() : '';
+      var insertPrompt = promptText || desc || 'Library image';
+      return {
+        id: String(row.id),
+        imageUrl: imageUrl,
+        aspectRatio: aspectRatio,
+        insertPrompt: insertPrompt,
+      };
+    }
+
     function isTerminalStatus(s) {
       return s === 'completed' || s === 'failed';
     }
@@ -909,6 +969,13 @@
     var _generationRunning = false;
     var generationResults = [];
     var selectedImageId = null;
+    var libraryRows = [];
+    var libraryOutgoingCursor = null;
+    var libraryHasMore = false;
+    var _libraryLoading = false;
+    var librarySelectedId = null;
+    var _libraryLoadGen = 0;
+    var zoomContext = 'results';
     var lastPromptForInsert = '';
     var zoomOpenIndex = 0;
     var _batchWaitResolve = null;
@@ -1356,7 +1423,7 @@
           });
           btn.addEventListener('dblclick', function (ev) {
             ev.preventDefault();
-            openZoom(idx);
+            openZoom('results', idx);
           });
           grid.appendChild(btn);
         })(i);
@@ -1376,6 +1443,206 @@
         cell.classList.toggle('is-selected', on);
         cell.setAttribute('aria-pressed', on ? 'true' : 'false');
       }
+    }
+
+    function syncLibraryGridSelection() {
+      var grid = document.getElementById('library-grid');
+      if (!grid) return;
+      var cells = grid.querySelectorAll('.image-cell');
+      for (var c = 0; c < cells.length; c++) {
+        var cell = cells[c];
+        var id = cell.getAttribute('data-image-id');
+        var on = id === librarySelectedId;
+        cell.classList.toggle('is-selected', on);
+        cell.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    }
+
+    async function openLibraryView() {
+      var errEl = document.getElementById('library-error');
+      if (errEl) {
+        errEl.textContent = '';
+        errEl.classList.remove('is-visible');
+      }
+      libraryRows = [];
+      libraryOutgoingCursor = null;
+      libraryHasMore = false;
+      librarySelectedId = null;
+      _libraryLoadGen += 1;
+      var gen = _libraryLoadGen;
+      renderLibraryGrid();
+      var apiKey = getApiKey();
+      var brandSessionId = getBrandSessionId();
+      if (!apiKey || !brandSessionId) {
+        if (errEl) {
+          errEl.textContent = 'Add an API key and choose a brand first.';
+          errEl.classList.add('is-visible');
+        }
+        return;
+      }
+      await loadLibraryNextPage(gen);
+    }
+
+    async function loadLibraryNextPage(gen) {
+      if (gen === void 0) gen = _libraryLoadGen;
+      if (gen !== _libraryLoadGen) return;
+      if (_libraryLoading) return;
+      if (libraryRows.length > 0 && !libraryHasMore) return;
+      var apiKey = getApiKey();
+      var brandSessionId = getBrandSessionId();
+      if (!apiKey || !brandSessionId) return;
+      var loadMoreBtn = document.getElementById('btn-library-load-more');
+      var errPanel = document.getElementById('library-error');
+      _libraryLoading = true;
+      if (loadMoreBtn) loadMoreBtn.disabled = true;
+      try {
+        var cursorForRequest = libraryRows.length === 0 ? null : libraryOutgoingCursor;
+        var page = await listBrandCompletedImagesPage(apiKey, brandSessionId, cursorForRequest);
+        if (gen !== _libraryLoadGen) return;
+        var bySeen = {};
+        for (var i = 0; i < libraryRows.length; i++) {
+          bySeen[String(libraryRows[i].id)] = true;
+        }
+        for (var j = 0; j < page.images.length; j++) {
+          var mapped = mapListRowToLibraryItem(page.images[j]);
+          if (bySeen[mapped.id]) continue;
+          bySeen[mapped.id] = true;
+          libraryRows.push(mapped);
+        }
+        libraryOutgoingCursor =
+          typeof page.nextCursor === 'string' && page.nextCursor.length > 0 ? page.nextCursor : null;
+        libraryHasMore = !!page.hasMore;
+        if (!librarySelectedId && libraryRows.length > 0) {
+          librarySelectedId = libraryRows[0].id;
+        }
+        if (errPanel) {
+          if (libraryRows.length === 0) {
+            errPanel.textContent = 'No completed generated images for this brand yet.';
+            errPanel.classList.add('is-visible');
+          } else {
+            errPanel.textContent = '';
+            errPanel.classList.remove('is-visible');
+          }
+        }
+        renderLibraryGrid();
+      } catch (e) {
+        if (gen !== _libraryLoadGen) return;
+        var em = e instanceof Error ? e.message : String(e);
+        showToast(em, true);
+        if (errPanel) {
+          errPanel.textContent = em;
+          errPanel.classList.add('is-visible');
+        }
+      } finally {
+        if (gen !== _libraryLoadGen) return;
+        _libraryLoading = false;
+        if (loadMoreBtn) {
+          loadMoreBtn.disabled = !libraryHasMore;
+        }
+      }
+    }
+
+    function renderLibraryGrid() {
+      var grid = document.getElementById('library-grid');
+      if (!grid) return;
+      grid.innerHTML = '';
+      grid.classList.toggle('results-grid--single', libraryRows.length <= 1);
+      for (var i = 0; i < libraryRows.length; i++) {
+        (function (idx) {
+          var r = libraryRows[idx];
+          var idStr = String(r.id != null ? r.id : '');
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'image-cell' + (r.id === librarySelectedId ? ' is-selected' : '');
+          btn.setAttribute('role', 'listitem');
+          btn.setAttribute('aria-pressed', r.id === librarySelectedId ? 'true' : 'false');
+          btn.setAttribute('data-image-id', idStr);
+          if (btn.dataset) {
+            btn.dataset.imageId = idStr;
+          }
+
+          var badge = document.createElement('span');
+          badge.className = 'image-cell__badge';
+          badge.textContent = r.aspectRatio || '—';
+
+          var loadWrap = document.createElement('div');
+          loadWrap.className = 'image-cell__loading';
+          var sp = document.createElement('div');
+          sp.className = 'spinner';
+          sp.setAttribute('aria-hidden', 'true');
+          loadWrap.appendChild(sp);
+
+          var img = document.createElement('img');
+          img.className = 'image-cell__thumb';
+          img.alt = 'Library image ' + String(idx + 1);
+          img.decoding = 'async';
+          img.width = 400;
+          img.height = 400;
+          img.onload = function () {
+            loadWrap.classList.add('is-hidden');
+          };
+          var resolved = getImageUrl(r.imageUrl);
+          if (resolved) {
+            if (resolved.indexOf('data:') !== 0) {
+              postToCode({ type: 'FETCH_IMAGE_DATA', imageId: idStr, imageUrl: resolved });
+            }
+            img.src = resolved;
+            img.onerror = function () {};
+          } else {
+            loadWrap.classList.add('is-hidden');
+            btn.classList.add('image-cell--unavailable');
+            var ph = document.createElement('span');
+            ph.className = 'image-cell__unavailable';
+            ph.textContent = 'Image unavailable';
+            btn.appendChild(ph);
+          }
+          btn.appendChild(badge);
+          btn.appendChild(loadWrap);
+          btn.appendChild(img);
+
+          btn.addEventListener('click', function () {
+            librarySelectedId = r.id;
+            syncLibraryGridSelection();
+          });
+          btn.addEventListener('dblclick', function (ev) {
+            ev.preventDefault();
+            openZoom('library', idx);
+          });
+          grid.appendChild(btn);
+        })(i);
+      }
+    }
+
+    function getSelectedLibraryRow() {
+      for (var li = 0; li < libraryRows.length; li++) {
+        if (libraryRows[li].id === librarySelectedId) return libraryRows[li];
+      }
+      return libraryRows.length > 0 ? libraryRows[0] : null;
+    }
+
+    function onLibraryInsertClick() {
+      if (isBatchMode && batchFrames.length > 0) {
+        showToast('Library insert works with a single frame. Deselect extra frames or use Generate for batch.', true);
+        return;
+      }
+      var row = getSelectedLibraryRow();
+      if (!row || !row.imageUrl) {
+        showToast('Select an image', true);
+        return;
+      }
+      var url = row.imageUrl;
+      var pr = row.insertPrompt || 'Library image';
+      var ratio = row.aspectRatio || '1:1';
+      if (isReplaceMode && frameId) {
+        postToCode({ type: 'REPLACE_IMAGE', nodeId: frameId, imageUrl: getImageUrl(url) });
+      } else {
+        postToCode({ type: 'INSERT_IMAGE', imageUrl: getImageUrl(url), prompt: pr, aspectRatio: ratio });
+      }
+    }
+
+    function onLibraryBackClick() {
+      closeZoom();
+      showView('generator');
     }
 
     function getSelectedResult() {
@@ -1400,12 +1667,14 @@
       return !!(ov && ov.classList.contains('is-open'));
     }
 
-    function openZoom(index) {
-      if (!generationResults.length) return;
-      var n = generationResults.length;
+    function openZoom(context, index) {
+      var rows = context === 'library' ? libraryRows : generationResults;
+      if (!rows.length) return;
+      var n = rows.length;
       var clamped = Math.max(0, Math.min(n - 1, index));
       zoomOpenIndex = clamped;
-      var r = generationResults[clamped];
+      zoomContext = context;
+      var r = rows[clamped];
       var img = document.getElementById('zoom-overlay-img');
       var ov = document.getElementById('zoom-overlay');
       if (img && r && r.imageUrl) img.src = getImageUrl(r.imageUrl);
@@ -1425,7 +1694,8 @@
     }
 
     function updateZoomNavState() {
-      var n = generationResults.length;
+      var rows = zoomContext === 'library' ? libraryRows : generationResults;
+      var n = rows.length;
       var prev = document.getElementById('zoom-prev');
       var next = document.getElementById('zoom-next');
       if (prev) prev.disabled = n <= 1;
@@ -1433,13 +1703,19 @@
     }
 
     function flashInsertButton(label) {
-      var btn = document.getElementById('btn-insert-selected');
-      if (!btn) return;
-      var def = btn.getAttribute('data-default-label') || 'Insert selected';
       if (_insertFlashTimer) clearTimeout(_insertFlashTimer);
-      btn.textContent = label;
+      var pairs = [];
+      var ids = ['btn-insert-selected', 'btn-library-insert'];
+      for (var bi = 0; bi < ids.length; bi++) {
+        var b = document.getElementById(ids[bi]);
+        if (!b) continue;
+        pairs.push({ el: b, def: b.getAttribute('data-default-label') || 'Insert selected' });
+        b.textContent = label;
+      }
       _insertFlashTimer = setTimeout(function () {
-        btn.textContent = def;
+        for (var pi = 0; pi < pairs.length; pi++) {
+          pairs[pi].el.textContent = pairs[pi].def;
+        }
         _insertFlashTimer = null;
       }, 1800);
     }
@@ -1489,12 +1765,15 @@
     function findResultCellByImageId(imageId) {
       var idStr = imageId != null ? String(imageId) : '';
       if (idStr === '') return null;
-      var grid = document.getElementById('results-grid');
-      if (!grid) return null;
-      var cells = grid.querySelectorAll('.image-cell');
-      for (var c = 0; c < cells.length; c++) {
-        if (String(cells[c].getAttribute('data-image-id') || '') === idStr) {
-          return cells[c];
+      var grids = [document.getElementById('results-grid'), document.getElementById('library-grid')];
+      for (var gi = 0; gi < grids.length; gi++) {
+        var grid = grids[gi];
+        if (!grid) continue;
+        var cells = grid.querySelectorAll('.image-cell');
+        for (var c = 0; c < cells.length; c++) {
+          if (String(cells[c].getAttribute('data-image-id') || '') === idStr) {
+            return cells[c];
+          }
         }
       }
       return null;
@@ -2055,7 +2334,7 @@
           const imageIdStr = imageId != null ? String(imageId) : '';
           if (!imageIdStr) break;
 
-          const cell = document.querySelector(`[data-image-id="${imageIdStr}"]`);
+          const cell = findResultCellByImageId(imageIdStr);
           if (!cell) break;
 
           const imgEl = cell.querySelector('img');
@@ -2086,6 +2365,12 @@
             result.imageUrl = dataUrlStr;
             result.url = dataUrlStr;
           }
+          const libRow = libraryRows.find(function (r) {
+            return String(r.id != null ? r.id : '') === imageIdStr;
+          });
+          if (libRow) {
+            libRow.imageUrl = dataUrlStr;
+          }
           break;
         }
         case 'IMAGE_DATA_ERROR':
@@ -2106,6 +2391,13 @@
 
     var btnConnect = document.getElementById('btn-setup-connect');
     if (btnConnect) btnConnect.addEventListener('click', onConnectClick);
+
+    var btnSetupBack = document.getElementById('btn-setup-back');
+    if (btnSetupBack) {
+      btnSetupBack.addEventListener('click', function () {
+        postToCode({ type: 'CLOSE' });
+      });
+    }
 
     var btnBrandAdd = document.getElementById('btn-brand-add');
     if (btnBrandAdd) btnBrandAdd.addEventListener('click', onAddBrandFromUrl);
@@ -2131,14 +2423,44 @@
       });
     }
 
+    var btnOpenLibrary = document.getElementById('btn-open-library');
+    if (btnOpenLibrary) {
+      btnOpenLibrary.addEventListener('click', function () {
+        showView('library');
+      });
+    }
+
+    var btnGeneratorBack = document.getElementById('btn-generator-back');
+    if (btnGeneratorBack) {
+      btnGeneratorBack.addEventListener('click', function () {
+        showView('brand-select');
+      });
+    }
+
     var btnGenerate = document.getElementById('btn-generate');
     if (btnGenerate) btnGenerate.addEventListener('click', onGenerateClick);
 
     var btnInsertSelected = document.getElementById('btn-insert-selected');
     if (btnInsertSelected) btnInsertSelected.addEventListener('click', onInsertSelectedClick);
 
+    var btnLibraryInsert = document.getElementById('btn-library-insert');
+    if (btnLibraryInsert) btnLibraryInsert.addEventListener('click', onLibraryInsertClick);
+
+    var btnLibraryLoadMore = document.getElementById('btn-library-load-more');
+    if (btnLibraryLoadMore) {
+      btnLibraryLoadMore.addEventListener('click', function () {
+        void loadLibraryNextPage();
+      });
+    }
+
+    var btnLibraryBack = document.getElementById('btn-library-back');
+    if (btnLibraryBack) btnLibraryBack.addEventListener('click', onLibraryBackClick);
+
     var btnNewGeneration = document.getElementById('btn-new-generation');
     if (btnNewGeneration) btnNewGeneration.addEventListener('click', onNewGenerationClick);
+
+    var btnResultsBack = document.getElementById('btn-results-back');
+    if (btnResultsBack) btnResultsBack.addEventListener('click', onNewGenerationClick);
 
     var btnRegenerate = document.getElementById('btn-regenerate');
     if (btnRegenerate) btnRegenerate.addEventListener('click', onRegenerateClick);
@@ -2166,28 +2488,36 @@
     var zoomPrev = document.getElementById('zoom-prev');
     if (zoomPrev) {
       zoomPrev.addEventListener('click', function () {
-        var n = generationResults.length;
+        var rows = zoomContext === 'library' ? libraryRows : generationResults;
+        var n = rows.length;
         if (n <= 1) return;
-        openZoom((zoomOpenIndex - 1 + n) % n);
+        openZoom(zoomContext, (zoomOpenIndex - 1 + n) % n);
       });
     }
 
     var zoomNext = document.getElementById('zoom-next');
     if (zoomNext) {
       zoomNext.addEventListener('click', function () {
-        var n = generationResults.length;
+        var rows = zoomContext === 'library' ? libraryRows : generationResults;
+        var n = rows.length;
         if (n <= 1) return;
-        openZoom((zoomOpenIndex + 1) % n);
+        openZoom(zoomContext, (zoomOpenIndex + 1) % n);
       });
     }
 
     var zoomSelectThis = document.getElementById('zoom-select-this');
     if (zoomSelectThis) {
       zoomSelectThis.addEventListener('click', function () {
-        var r = generationResults[zoomOpenIndex];
+        var rows = zoomContext === 'library' ? libraryRows : generationResults;
+        var r = rows[zoomOpenIndex];
         if (r) {
-          selectedImageId = r.id;
-          syncResultsGridSelection();
+          if (zoomContext === 'library') {
+            librarySelectedId = r.id;
+            syncLibraryGridSelection();
+          } else {
+            selectedImageId = r.id;
+            syncResultsGridSelection();
+          }
         }
       });
     }
