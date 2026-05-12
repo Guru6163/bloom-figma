@@ -111,6 +111,30 @@ body {
   max-width: 36em;
 }
 
+.credits-line {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.frame-pill {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.prompt-count {
+  margin: 4px 0 0;
+  text-align: right;
+}
+
 .field {
   display: flex;
   flex-direction: column;

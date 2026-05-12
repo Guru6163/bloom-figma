@@ -74,6 +74,8 @@
         <div>
           <h2 id="gen-title" class="view__title">Generate</h2>
           <p class="view__lead">Describe the image. Bloom applies your brand’s visual DNA automatically.</p>
+          <p id="credits" class="credits-line">Credits: —</p>
+          <div id="frame-pill" class="frame-pill" role="status">No frame selected</div>
         </div>
         <div class="field">
           <label class="field__label" for="prompt-input">Prompt</label>
@@ -82,30 +84,22 @@
             class="textarea"
             name="prompt"
             rows="5"
+            maxlength="500"
             placeholder="e.g. Product hero shot of our water bottle on marble, soft daylight…"
           ></textarea>
+          <p id="prompt-count" class="hint prompt-count" aria-live="polite">0/500</p>
         </div>
         <div class="field">
           <span class="field__label" id="ratio-label">Aspect ratio</span>
-          <div class="pill-row" role="group" aria-labelledby="ratio-label">
-            <button type="button" class="pill is-selected">1:1</button>
-            <button type="button" class="pill">4:5</button>
-            <button type="button" class="pill">9:16</button>
-            <button type="button" class="pill">16:9</button>
-          </div>
+          <div id="ratio-pills" class="pill-row" role="group" aria-labelledby="ratio-label"></div>
         </div>
         <div class="field">
           <span class="field__label" id="variant-label">Variants</span>
-          <div class="variant-row" role="group" aria-labelledby="variant-label">
-            <button type="button" class="variant-btn is-selected" aria-pressed="true">1</button>
-            <button type="button" class="variant-btn" aria-pressed="false">2</button>
-            <button type="button" class="variant-btn" aria-pressed="false">3</button>
-            <button type="button" class="variant-btn" aria-pressed="false">4</button>
-          </div>
+          <div id="variant-buttons" class="variant-row" role="group" aria-labelledby="variant-label"></div>
         </div>
         <div class="stack">
-          <button type="button" class="btn-primary">Generate</button>
-          <button type="button" class="btn-secondary">Change brand</button>
+          <button id="btn-generate" type="button" class="btn-primary" disabled>Generate</button>
+          <button id="btn-change-brand" type="button" class="btn-secondary">Change brand</button>
         </div>
       </section>
 
@@ -228,7 +222,8 @@
      * showView(id)
      * Shows one view and hides all others.
      * Only one view is visible at a time.
-     * When switching to brand-select, loads brands from the Bloom API.
+     * brand-select: loads brands from the Bloom API.
+     * generator: refreshes selection, credits, ratio/variant UI, and prompt controls.
      */
     function showView(id) {
       currentViewId = id;
@@ -243,6 +238,14 @@
       }
       if (id === 'brand-select') {
         void loadBrands();
+      }
+      if (id === 'generator') {
+        requestSelection();
+        void loadCredits();
+        renderFramePill();
+        renderVariants();
+        renderRatios();
+        syncPromptUi();
       }
     }
 
@@ -619,6 +622,185 @@
       return input ? String(input.value || '').trim() : '';
     }
 
+    /* -------------------------------------------------------------------------- */
+    /* Generator view state */
+    /* -------------------------------------------------------------------------- */
+
+    var PROMPT_MAX = 500;
+    var frameWidth = null;
+    var frameHeight = null;
+    var frameName = '';
+    var frameId = null;
+    var isReplaceMode = false;
+    var isBatchMode = false;
+    var batchFrames = [];
+    /** 'auto' | '1:1' | '4:5' | '9:16' | '16:9' */
+    var selectedRatio = 'auto';
+    var variantCount = 1;
+
+    /**
+     * Asks code.ts for the current Figma selection (replies via postMessage).
+     */
+    function requestSelection() {
+      postToCode({ type: 'GET_SELECTION' });
+    }
+
+    /**
+     * Maps pixel dimensions to the closest Bloom aspect ratio.
+     * Thresholds: 1:1 (±8%), 4:5 (±8%), 9:16 (±8%), 16:9 (±10%)
+     * Falls back to "1:1" if no match.
+     */
+    function detectAspectRatio(w, h) {
+      if (!(w > 0) || !(h > 0)) return '1:1';
+      var α = w / h;
+      var candidates = [
+        { id: '1:1', r: 1, tol: 0.08 },
+        { id: '4:5', r: 4 / 5, tol: 0.08 },
+        { id: '9:16', r: 9 / 16, tol: 0.08 },
+        { id: '16:9', r: 16 / 9, tol: 0.1 },
+      ];
+      var matches = [];
+      for (var i = 0; i < candidates.length; i++) {
+        var c = candidates[i];
+        var relErr = Math.abs(α - c.r) / c.r;
+        if (relErr <= c.tol) {
+          matches.push({ id: c.id, dist: Math.abs(α - c.r) });
+        }
+      }
+      if (matches.length === 0) return '1:1';
+      matches.sort(function (a, b) {
+        return a.dist - b.dist;
+      });
+      return matches[0].id;
+    }
+
+    /**
+     * renderVariants()
+     * Renders 4 buttons (1/2/3/4) for selecting variant count.
+     * Active button highlighted in accent color.
+     */
+    function renderVariants() {
+      var host = document.getElementById('variant-buttons');
+      if (!host) return;
+      host.innerHTML = '';
+      for (var n = 1; n <= 4; n++) {
+        (function (count) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'variant-btn' + (variantCount === count ? ' is-selected' : '');
+          btn.setAttribute('aria-pressed', variantCount === count ? 'true' : 'false');
+          btn.textContent = String(count);
+          btn.addEventListener('click', function () {
+            variantCount = count;
+            renderVariants();
+          });
+          host.appendChild(btn);
+        })(n);
+      }
+    }
+
+    /**
+     * renderRatios()
+     * Renders aspect ratio pills: Auto | 1:1 | 4:5 | 9:16 | 16:9
+     * "Auto" detects ratio from selected frame dimensions.
+     * Active pill highlighted in accent color.
+     */
+    function renderRatios() {
+      var host = document.getElementById('ratio-pills');
+      if (!host) return;
+      var labels = [
+        { value: 'auto', label: 'Auto' },
+        { value: '1:1', label: '1:1' },
+        { value: '4:5', label: '4:5' },
+        { value: '9:16', label: '9:16' },
+        { value: '16:9', label: '16:9' },
+      ];
+      host.innerHTML = '';
+      for (var i = 0; i < labels.length; i++) {
+        (function (entry) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'pill' + (selectedRatio === entry.value ? ' is-selected' : '');
+          btn.setAttribute('aria-pressed', selectedRatio === entry.value ? 'true' : 'false');
+          btn.setAttribute('data-ratio', entry.value);
+          btn.textContent = entry.label;
+          btn.addEventListener('click', function () {
+            selectedRatio = entry.value;
+            renderRatios();
+          });
+          host.appendChild(btn);
+        })(labels[i]);
+      }
+    }
+
+    /**
+     * renderFramePill()
+     * Shows current Figma selection state:
+     *   - Frame selected: shows frame name and dimensions
+     *   - Image layer selected: shows "Replace mode"
+     *   - Multiple frames: shows "Batch mode — N frames"
+     *   - Nothing: shows "No frame selected"
+     */
+    function renderFramePill() {
+      var el = document.getElementById('frame-pill');
+      if (!el) return;
+      if (isReplaceMode) {
+        el.textContent = 'Replace mode';
+        return;
+      }
+      if (isBatchMode && batchFrames.length > 0) {
+        el.textContent = 'Batch mode — ' + String(batchFrames.length) + ' frames';
+        return;
+      }
+      if (frameWidth != null && frameHeight != null && frameName) {
+        el.textContent = frameName + ' · ' + String(Math.round(frameWidth)) + '×' + String(Math.round(frameHeight)) + 'px';
+        return;
+      }
+      if (frameWidth != null && frameHeight != null) {
+        el.textContent = String(Math.round(frameWidth)) + '×' + String(Math.round(frameHeight)) + 'px';
+        return;
+      }
+      el.textContent = 'No frame selected';
+    }
+
+    /**
+     * loadCredits()
+     * Fetches credit balance and updates #credits element.
+     * Shows "Credits: N" or "Credits: Error" on failure.
+     */
+    async function loadCredits() {
+      var el = document.getElementById('credits');
+      if (!el) return;
+      var apiKey = getApiKey();
+      if (!apiKey) {
+        el.textContent = 'Credits: —';
+        return;
+      }
+      try {
+        var balance = await getCredits(apiKey);
+        if (balance >= Number.MAX_SAFE_INTEGER / 2) {
+          el.textContent = 'Credits: Unlimited';
+        } else {
+          el.textContent = 'Credits: ' + String(balance);
+        }
+      } catch (_e) {
+        el.textContent = 'Credits: Error';
+      }
+    }
+
+    function syncPromptUi() {
+      var ta = document.getElementById('prompt-input');
+      var countEl = document.getElementById('prompt-count');
+      var btn = document.getElementById('btn-generate');
+      var raw = ta ? String(ta.value || '') : '';
+      if (raw.length > PROMPT_MAX && ta) {
+        ta.value = raw.slice(0, PROMPT_MAX);
+        raw = ta.value;
+      }
+      if (countEl) countEl.textContent = String(raw.length) + '/500';
+      if (btn) btn.disabled = raw.trim().length === 0;
+    }
+
     function setBrandListError(text) {
       var el = document.getElementById('brand-list-error');
       if (!el) return;
@@ -941,6 +1123,7 @@
      *   KEY_LOADED — restore saved API key, validate, show correct view
      *   KEY_SAVED  — no action needed
      *   BRAND_LOADED — store brandId for later use
+     *   FRAME_SELECTED, IMAGE_LAYER_SELECTED, MULTI_FRAME_SELECTED, NO_FRAME_SELECTED — canvas selection
      */
     function onPluginMessage(event) {
       var msg = event.data && event.data.pluginMessage;
@@ -990,6 +1173,46 @@
             }
           }
           break;
+        case 'FRAME_SELECTED':
+          frameWidth = typeof msg.width === 'number' ? msg.width : null;
+          frameHeight = typeof msg.height === 'number' ? msg.height : null;
+          frameName = msg.name != null ? String(msg.name) : '';
+          frameId = msg.frameId != null ? String(msg.frameId) : null;
+          isReplaceMode = false;
+          isBatchMode = false;
+          batchFrames = [];
+          renderFramePill();
+          break;
+        case 'IMAGE_LAYER_SELECTED':
+          isReplaceMode = true;
+          isBatchMode = false;
+          batchFrames = [];
+          frameWidth = typeof msg.width === 'number' ? msg.width : null;
+          frameHeight = typeof msg.height === 'number' ? msg.height : null;
+          frameName = msg.name != null ? String(msg.name) : '';
+          frameId = msg.nodeId != null ? String(msg.nodeId) : null;
+          renderFramePill();
+          break;
+        case 'MULTI_FRAME_SELECTED':
+          isReplaceMode = false;
+          isBatchMode = true;
+          frameWidth = null;
+          frameHeight = null;
+          frameName = '';
+          frameId = null;
+          batchFrames = Array.isArray(msg.frames) ? msg.frames.slice() : [];
+          renderFramePill();
+          break;
+        case 'NO_FRAME_SELECTED':
+          frameWidth = null;
+          frameHeight = null;
+          frameName = '';
+          frameId = null;
+          isReplaceMode = false;
+          isBatchMode = false;
+          batchFrames = [];
+          renderFramePill();
+          break;
         default:
           break;
       }
@@ -1008,6 +1231,21 @@
 
     var btnBrandBack = document.getElementById('btn-brand-back');
     if (btnBrandBack) btnBrandBack.addEventListener('click', onBrandBackClick);
+
+    var promptInput = document.getElementById('prompt-input');
+    if (promptInput) {
+      promptInput.addEventListener('input', syncPromptUi);
+      promptInput.addEventListener('paste', function () {
+        requestAnimationFrame(syncPromptUi);
+      });
+    }
+
+    var btnChangeBrand = document.getElementById('btn-change-brand');
+    if (btnChangeBrand) {
+      btnChangeBrand.addEventListener('click', function () {
+        showView('brand-select');
+      });
+    }
 
     /**
      * On plugin load:
