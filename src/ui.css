@@ -573,9 +573,20 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 16px;
+}
+
+.view--generating {
+  justify-content: center;
+  align-items: center;
   text-align: center;
-  gap: 12px;
-  padding: 24px 8px 8px;
+  padding-top: 32px;
+  padding-bottom: 32px;
+}
+
+.generating-title {
+  font-size: 18px;
+  font-weight: 600;
 }
 
 .spinner {

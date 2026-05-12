@@ -225,48 +225,36 @@ export async function getBrand(apiKey: string, brandId: string): Promise<BloomBr
 
 // --- Image functions ---
 
+/**
+ * Image IDs from POST /images/generations ({ data: { ids } })
+ * or POST /images/{id}/edit ({ data: { id } }).
+ */
 function parseGenerationImageIds(body: unknown): string[] {
-  function collectIds(o: Record<string, unknown> | null): string[] {
-    if (!o || typeof o !== 'object') return [];
-    const ids =
-      o.imageIds ??
-      o.image_ids ??
-      o.generatedImageIds ??
-      o.generated_image_ids;
-    if (Array.isArray(ids)) {
-      return ids.filter((x): x is string => typeof x === 'string');
-    }
-    if (Array.isArray(o.images)) {
-      return (o.images as unknown[])
-        .map((x) => (x && typeof x === 'object' ? String((x as { id?: unknown }).id ?? '') : ''))
-        .filter((x) => x !== '');
-    }
-    if (typeof o.id === 'string' && o.id !== '') return [o.id];
+  const data = unwrapData<unknown>(body);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return [];
   }
-  const root = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
-  const data = unwrapData<unknown>(body);
-  if (Array.isArray(data)) {
-    const arrOut: string[] = [];
-    for (const el of data) {
-      if (typeof el === 'string' && el !== '') arrOut.push(el);
-      else if (el && typeof el === 'object' && 'id' in el) arrOut.push(String((el as { id: unknown }).id));
-    }
-    if (arrOut.length > 0) return arrOut;
+  const o = data as Record<string, unknown>;
+  const rawIds = o.ids;
+  if (Array.isArray(rawIds) && rawIds.length > 0) {
+    return rawIds
+      .map((x) => (typeof x === 'string' ? x : x != null ? String(x) : ''))
+      .filter((x) => x !== '');
   }
-  const fromData = collectIds(data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null);
-  if (fromData.length > 0) return fromData;
-  return collectIds(root);
+  if (o.id != null && String(o.id) !== '') {
+    return [String(o.id)];
+  }
+  return [];
 }
 
 /**
  * Starts generating images using the Bloom API.
  * Returns image IDs immediately — images generate asynchronously.
- * Poll pollImages() until all images are complete.
+ * Poll `pollImages(apiKey, brandSessionId, ids, …)` until all images are complete.
  *
  * @param brandSessionId - Use brand.brandSessionId or brand.id
  * @param aspectRatio - One of: "1:1" | "4:5" | "9:16" | "16:9"
- * @param variantCount - Number of variants to generate (1-4)
+ * @param variantCount - Number of variants to generate (1-5)
  */
 export async function generateImages(
   apiKey: string,
@@ -275,7 +263,7 @@ export async function generateImages(
   aspectRatio: string,
   variantCount: number
 ): Promise<string[]> {
-  const clamped = Math.min(4, Math.max(1, Math.floor(variantCount)));
+  const clamped = Math.min(5, Math.max(1, Math.floor(variantCount)));
   const raw = await bloomFetch<unknown>(
     '/images/generations',
     apiKey,
@@ -300,21 +288,28 @@ export async function generateImages(
 }
 
 /**
- * Applies an edit instruction to an existing generated image.
+ * Applies an edit prompt to an existing image (POST /images/{id}/edit).
  */
-export async function editImage(apiKey: string, imageId: string, instruction: string): Promise<string[]> {
+export async function editImage(
+  apiKey: string,
+  brandSessionId: string,
+  imageId: string,
+  prompt: string
+): Promise<string[]> {
   const raw = await bloomFetch<unknown>(
     `/images/${encodeURIComponent(imageId)}/edit`,
     apiKey,
     {
       method: 'POST',
-      body: JSON.stringify({ instruction }),
+      body: JSON.stringify({
+        brandSessionId,
+        brand_session_id: brandSessionId,
+        prompt,
+      }),
     }
   );
   const ids = parseGenerationImageIds(raw);
   if (ids.length > 0) return ids;
-  const d = unwrapData<Record<string, unknown>>(raw);
-  if (d && typeof d.id === 'string' && d.id) return [d.id];
   throw new Error('Bloom API: edit returned no image IDs');
 }
 
@@ -322,7 +317,10 @@ function parseImagesList(body: unknown): BloomImage[] {
   const root = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
   let images: unknown[] = [];
 
-  if (Array.isArray(root.images)) {
+  const dataObj = unwrapData<Record<string, unknown>>(body);
+  if (dataObj && typeof dataObj === 'object' && Array.isArray(dataObj.images)) {
+    images = dataObj.images as unknown[];
+  } else if (Array.isArray(root.images)) {
     images = root.images;
   } else if (root.data && typeof root.data === 'object' && Array.isArray((root.data as Record<string, unknown>).images)) {
     images = (root.data as Record<string, unknown>).images as unknown[];
@@ -344,12 +342,11 @@ function isTerminalStatus(s: BloomImage['status'] | undefined): boolean {
 
 /**
  * Polls the Bloom API until all images are complete.
- * Uses the batch polling endpoint: GET /images?ids=...&wait=true
- * Calls onProgress with 0-100 as images complete.
- * Throws if images fail or timeout after 120 seconds.
+ * GET /images uses comma-separated `ids`, `includeUrls=true` for usable URLs, optional `brandSessionId`.
  */
 export async function pollImages(
   apiKey: string,
+  brandSessionId: string,
   imageIds: string[],
   onProgress: (percent: number) => void
 ): Promise<BloomImage[]> {
@@ -359,7 +356,7 @@ export async function pollImages(
   }
 
   const deadline = Date.now() + 120_000;
-  const idSet = new Set(imageIds);
+  const idSet = new Set(imageIds.map((id) => String(id).trim()).filter(Boolean));
   let lastImages: BloomImage[] = [];
 
   onProgress(0);
@@ -367,20 +364,24 @@ export async function pollImages(
   while (Date.now() < deadline) {
     const remainingSec = Math.max(1, Math.min(60, Math.ceil((deadline - Date.now()) / 1000)));
     const qs = new URLSearchParams();
-    for (const id of imageIds) {
-      qs.append('ids', id);
-    }
+    qs.set('ids', imageIds.map((id) => String(id).trim()).filter(Boolean).join(','));
     qs.set('wait', 'true');
     qs.set('timeout', String(remainingSec));
+    qs.set('includeUrls', 'true');
+    const bs = String(brandSessionId || '').trim();
+    if (bs) qs.set('brandSessionId', bs);
 
     const raw = await bloomFetch<unknown>(`/images?${qs.toString()}`, apiKey, { method: 'GET' });
     lastImages = parseImagesList(raw);
 
-    const byId = new Map(lastImages.map((im) => [im.id, im]));
+    const byId = new Map(
+      lastImages.map((im) => [String(im.id || '').trim(), im] as const).filter(([k]) => k !== '')
+    );
     let terminal = 0;
     let failed = false;
     for (const id of imageIds) {
-      const im = byId.get(id);
+      const tid = String(id).trim();
+      const im = byId.get(tid);
       if (im && isTerminalStatus(im.status)) {
         terminal += 1;
         if (im.status === 'failed') failed = true;
@@ -394,9 +395,11 @@ export async function pollImages(
     }
 
     if (terminal === imageIds.length) {
-      const ordered = imageIds.map((id) => byId.get(id)).filter((x): x is BloomImage => x !== undefined);
+      const ordered = imageIds
+        .map((id) => byId.get(String(id).trim()))
+        .filter((x): x is BloomImage => x !== undefined);
       onProgress(100);
-      return ordered.length === imageIds.length ? ordered : lastImages.filter((im) => idSet.has(im.id));
+      return ordered.length === imageIds.length ? ordered : lastImages.filter((im) => idSet.has(String(im.id || '').trim()));
     }
   }
 

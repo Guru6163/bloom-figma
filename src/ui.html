@@ -114,32 +114,11 @@
         </div>
       </section>
 
-      <!-- 4. Loading / progress -->
-      <section id="generating" class="view" aria-labelledby="gen-loading-title" aria-busy="true">
+      <!-- 4. Loading (minimal: spinner + title only) -->
+      <section id="generating" class="view view--generating" aria-labelledby="gen-loading-title" aria-busy="true">
         <div class="generating-hero">
-          <div class="spinner" role="presentation" aria-hidden="true"></div>
-          <div>
-            <h2 id="gen-loading-title" class="view__title tight-title">Creating images…</h2>
-            <p class="view__lead tight-lead">This can take about a minute. You can keep working in Figma.</p>
-          </div>
-        </div>
-        <div class="skeleton skeleton-block" role="presentation" aria-hidden="true"></div>
-        <div class="progress-wrap">
-          <div class="progress-wrap__label">
-            <span>Progress</span>
-            <span id="gen-progress-value" class="progress-wrap__value">0%</span>
-          </div>
-          <div
-            id="gen-progress-track"
-            class="progress-wrap__track"
-            role="progressbar"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow="0"
-            aria-label="Generation progress"
-          >
-            <div id="gen-progress-fill" class="progress-wrap__fill"></div>
-          </div>
+          <div class="spinner" role="status" aria-label="Loading"></div>
+          <h2 id="gen-loading-title" class="view__title generating-title">Generating…</h2>
         </div>
       </section>
 
@@ -475,51 +454,25 @@
       });
     }
 
+    /**
+     * POST /images/generations and POST /images/{id}/edit return
+     * { data: { ids: string[] } } or { data: { id: string } } respectively.
+     */
     function parseGenerationImageIds(body) {
-      function collectIds(o) {
-        if (!o || typeof o !== 'object') return [];
-        var ids =
-          o.imageIds != null
-            ? o.imageIds
-            : o.image_ids != null
-              ? o.image_ids
-              : o.generatedImageIds != null
-                ? o.generatedImageIds
-                : o.generated_image_ids != null
-                  ? o.generated_image_ids
-                  : undefined;
-        if (Array.isArray(ids)) {
-          return ids.filter(function (x) {
-            return typeof x === 'string';
-          });
-        }
-        if (Array.isArray(o.images)) {
-          return o.images
-            .map(function (x) {
-              if (!x || typeof x !== 'object') return null;
-              return x.id != null ? String(x.id) : null;
-            })
-            .filter(function (x) {
-              return typeof x === 'string' && x !== '';
-            });
-        }
-        if (typeof o.id === 'string' && o.id !== '') return [o.id];
-        return [];
-      }
-      var root = body && typeof body === 'object' ? body : {};
       var data = unwrapData(body);
-      if (Array.isArray(data)) {
-        var arrOut = [];
-        for (var ai = 0; ai < data.length; ai++) {
-          var el = data[ai];
-          if (typeof el === 'string' && el !== '') arrOut.push(el);
-          else if (el && typeof el === 'object' && el.id != null) arrOut.push(String(el.id));
-        }
-        if (arrOut.length > 0) return arrOut;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+      var rawIds = data.ids;
+      if (Array.isArray(rawIds) && rawIds.length > 0) {
+        return rawIds
+          .map(function (x) {
+            return typeof x === 'string' ? x : x != null ? String(x) : '';
+          })
+          .filter(function (x) {
+            return x !== '';
+          });
       }
-      var fromData = collectIds(data && typeof data === 'object' && !Array.isArray(data) ? data : null);
-      if (fromData.length > 0) return fromData;
-      return collectIds(root);
+      if (data.id != null && String(data.id) !== '') return [String(data.id)];
+      return [];
     }
 
     /**
@@ -528,7 +481,7 @@
      * Poll pollImages() until all images are complete.
      */
     function generateImages(apiKey, brandSessionId, prompt, aspectRatio, variantCount) {
-      var clamped = Math.min(4, Math.max(1, Math.floor(variantCount)));
+      var clamped = Math.min(5, Math.max(1, Math.floor(variantCount)));
       return bloomFetch('/images/generations', apiKey, {
         method: 'POST',
         body: JSON.stringify({
@@ -549,15 +502,17 @@
       });
     }
 
-    function editImage(apiKey, imageId, instruction) {
+    function editImage(apiKey, brandSessionId, imageId, instruction) {
       return bloomFetch('/images/' + encodeURIComponent(imageId) + '/edit', apiKey, {
         method: 'POST',
-        body: JSON.stringify({ instruction: instruction }),
+        body: JSON.stringify({
+          brandSessionId: brandSessionId,
+          brand_session_id: brandSessionId,
+          prompt: instruction,
+        }),
       }).then(function (raw) {
         var ids = parseGenerationImageIds(raw);
         if (ids.length > 0) return ids;
-        var d = unwrapData(raw);
-        if (d && typeof d === 'object' && typeof d.id === 'string' && d.id) return [d.id];
         throw new Error('Bloom API: edit returned no image IDs');
       });
     }
@@ -565,7 +520,10 @@
     function parseImagesList(body) {
       var root = body && typeof body === 'object' ? body : {};
       var images = [];
-      if (Array.isArray(root.images)) {
+      var dataObj = unwrapData(body);
+      if (dataObj && typeof dataObj === 'object' && !Array.isArray(dataObj) && Array.isArray(dataObj.images)) {
+        images = dataObj.images;
+      } else if (Array.isArray(root.images)) {
         images = root.images;
       } else if (root.data && typeof root.data === 'object' && Array.isArray(root.data.images)) {
         images = root.data.images;
@@ -589,18 +547,16 @@
 
     /**
      * Polls the Bloom API until all images are complete.
-     * Uses the batch polling endpoint: GET /images?ids=...&wait=true
-     * Calls onProgress with 0-100 as images complete.
-     * Throws if images fail or timeout after 120 seconds.
+     * GET /images expects comma-separated ids, optional brandSessionId, includeUrls for direct URLs.
      */
-    function pollImages(apiKey, imageIds, onProgress) {
+    function pollImages(apiKey, brandSessionId, imageIds, onProgress) {
       if (imageIds.length === 0) {
         onProgress(100);
         return Promise.resolve([]);
       }
       var deadline = Date.now() + 120000;
       var idSet = {};
-      for (var j = 0; j < imageIds.length; j++) idSet[imageIds[j]] = true;
+      for (var j = 0; j < imageIds.length; j++) idSet[String(imageIds[j]).trim()] = true;
       var lastImages = [];
       onProgress(0);
       function pollOnce() {
@@ -609,21 +565,26 @@
         }
         var remainingSec = Math.max(1, Math.min(60, Math.ceil((deadline - Date.now()) / 1000)));
         var qs = new URLSearchParams();
-        for (var i = 0; i < imageIds.length; i++) {
-          qs.append('ids', imageIds[i]);
-        }
+        qs.set('ids', imageIds.map(function (id) { return String(id).trim(); }).filter(Boolean).join(','));
         qs.set('wait', 'true');
         qs.set('timeout', String(remainingSec));
+        qs.set('includeUrls', 'true');
+        if (brandSessionId && String(brandSessionId).trim() !== '') {
+          qs.set('brandSessionId', String(brandSessionId).trim());
+        }
         return bloomFetch('/images?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
           lastImages = parseImagesList(raw);
           var byId = {};
           for (var k = 0; k < lastImages.length; k++) {
-            byId[lastImages[k].id] = lastImages[k];
+            var row = lastImages[k];
+            var kid = String(row.id != null ? row.id : '').trim();
+            if (kid) byId[kid] = row;
           }
           var terminal = 0;
           var failed = false;
           for (var t = 0; t < imageIds.length; t++) {
-            var im = byId[imageIds[t]];
+            var tid = String(imageIds[t] != null ? imageIds[t] : '').trim();
+            var im = byId[tid];
             if (im && isTerminalStatus(im.status)) {
               terminal += 1;
               if (im.status === 'failed') failed = true;
@@ -636,7 +597,7 @@
           if (terminal === imageIds.length) {
             var ordered = imageIds
               .map(function (id) {
-                return byId[id];
+                return byId[String(id != null ? id : '').trim()];
               })
               .filter(function (x) {
                 return x !== undefined;
@@ -644,7 +605,7 @@
             onProgress(100);
             if (ordered.length === imageIds.length) return ordered;
             return lastImages.filter(function (im) {
-              return idSet[im.id];
+              return idSet[String(im.id != null ? im.id : '').trim()];
             });
           }
           return pollOnce();
@@ -766,14 +727,14 @@
 
     /**
      * renderVariants()
-     * Renders 4 buttons (1/2/3/4) for selecting variant count.
+     * Renders buttons (1–5) for selecting variant count.
      * Active button highlighted in accent color.
      */
     function renderVariants() {
       var host = document.getElementById('variant-buttons');
       if (!host) return;
       host.innerHTML = '';
-      for (var n = 1; n <= 4; n++) {
+      for (var n = 1; n <= 5; n++) {
         (function (count) {
           var btn = document.createElement('button');
           btn.type = 'button';
@@ -915,22 +876,12 @@
       syncPromptUi();
     }
 
-    function setGeneratingTitle(title, lead) {
+    function setGeneratingTitle(title) {
       var t = document.getElementById('gen-loading-title');
-      var leadEl = document.querySelector('#generating .tight-lead');
-      if (t) t.textContent = title || 'Creating images…';
-      if (leadEl) leadEl.textContent = lead || 'This can take about a minute. You can keep working in Figma.';
+      if (t) t.textContent = title || 'Generating…';
     }
 
-    function setGeneratingProgress(percent) {
-      var clamped = Math.max(0, Math.min(100, Math.round(percent)));
-      var fill = document.getElementById('gen-progress-fill');
-      var val = document.getElementById('gen-progress-value');
-      var track = document.getElementById('gen-progress-track');
-      if (fill) fill.style.width = String(clamped) + '%';
-      if (val) val.textContent = String(clamped) + '%';
-      if (track) track.setAttribute('aria-valuenow', String(clamped));
-    }
+    function setGeneratingProgress() {}
 
     function waitForBatchComplete() {
       return new Promise(function (resolve, reject) {
@@ -943,9 +894,9 @@
      * runGeneration()
      * The core generation flow:
      * 1. Get effective aspect ratio (Auto → detect from frame)
-     * 2. Show generating view with progress bar
+     * 2. Show generating view (spinner + title)
      * 3. Call generateImages() with prompt, ratio, variants
-     * 4. Call pollImages() — updates progress bar 0-100%
+     * 4. Call pollImages() until images are complete
      * 5. On success: store results, call showResults(), show results view
      * 6. On error: show toast, return to generator view
      */
@@ -959,17 +910,17 @@
       lastPromptForInsert = insertPromptLabel;
       _generationRunning = true;
       syncPromptUi();
-      setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+      setGeneratingTitle('Generating…');
       showView('generating');
       setGeneratingProgress(0);
       try {
         var ids = await generateImages(apiKey, brandSessionId, apiPrompt, effectiveRatio, vc);
-        var images = await pollImages(apiKey, ids, function (p) {
+        var images = await pollImages(apiKey, brandSessionId, ids, function (p) {
           setGeneratingProgress(p);
         });
         generationResults = images.map(function (im) {
           return {
-            id: im.id,
+            id: String(im.id != null ? im.id : ''),
             imageUrl: im.imageUrl != null ? getImageUrl(String(im.imageUrl)) : '',
             aspectRatio: effectiveRatio,
           };
@@ -1037,7 +988,7 @@
       lastPromptForInsert = prompt;
       _generationRunning = true;
       syncPromptUi();
-      setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+      setGeneratingTitle('Generating…');
       showView('generating');
       setGeneratingProgress(0);
       var totalFrames = batchFrames.length;
@@ -1049,7 +1000,7 @@
           var fr = batchFrames[fi];
           var ratio = detectAspectRatio(fr.width, fr.height);
           var ids = await generateImages(apiKey, brandSessionId, apiPrompt, ratio, 1);
-          var imgs = await pollImages(apiKey, ids, function (p) {
+          var imgs = await pollImages(apiKey, brandSessionId, ids, function (p) {
             var overall = ((framesDone + p / 100) / totalFrames) * 100;
             setGeneratingProgress(Math.round(overall));
           });
@@ -1082,7 +1033,7 @@
         _batchWaitReject = null;
         syncPromptUi();
         setGeneratingProgress(0);
-        setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+        setGeneratingTitle('Generating…');
       }
     }
 
@@ -1106,12 +1057,16 @@
       for (var i = 0; i < generationResults.length; i++) {
         (function (idx) {
           var r = generationResults[idx];
+          var idStr = String(r.id != null ? r.id : '');
           var btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'image-cell' + (r.id === selectedImageId ? ' is-selected' : '');
           btn.setAttribute('role', 'listitem');
           btn.setAttribute('aria-pressed', r.id === selectedImageId ? 'true' : 'false');
-          btn.setAttribute('data-image-id', r.id);
+          btn.setAttribute('data-image-id', idStr);
+          if (btn.dataset) {
+            btn.dataset.imageId = idStr;
+          }
 
           var badge = document.createElement('span');
           badge.className = 'image-cell__badge';
@@ -1134,12 +1089,24 @@
             loadWrap.classList.add('is-hidden');
           };
           var resolved = getImageUrl(r.imageUrl);
-          img.onerror = function () {
+          if (resolved) {
+            // Proactively fetch via code.ts to bypass CORS (Bloom URLs fail in the iframe)
+            if (resolved.indexOf('data:') !== 0) {
+              postToCode({ type: 'FETCH_IMAGE_DATA', imageId: idStr, imageUrl: resolved });
+            }
+            // Also try direct load as fallback
+            img.src = resolved;
+            img.onerror = function () {
+              // FETCH_IMAGE_DATA already sent above for non-data URLs
+            };
+          } else {
             loadWrap.classList.add('is-hidden');
-            if (resolved) postToCode({ type: 'FETCH_IMAGE_DATA', url: resolved, imageId: r.id });
-          };
-          if (resolved) img.src = resolved;
-
+            btn.classList.add('image-cell--unavailable');
+            var ph = document.createElement('span');
+            ph.className = 'image-cell__unavailable';
+            ph.textContent = 'Image unavailable';
+            btn.appendChild(ph);
+          }
           btn.appendChild(badge);
           btn.appendChild(loadWrap);
           btn.appendChild(img);
@@ -1276,47 +1243,37 @@
       }
     }
 
-    function markImageCellUnavailable(imageId) {
-      if (!imageId) return;
+    /**
+     * Finds a results-grid cell by Bloom image id (string-normalized).
+     * Avoids querySelector escaping issues for unusual id characters.
+     */
+    function findResultCellByImageId(imageId) {
+      var idStr = imageId != null ? String(imageId) : '';
+      if (idStr === '') return null;
       var grid = document.getElementById('results-grid');
-      if (!grid) return;
-      var cells = grid.querySelectorAll('.image-cell');
-      for (var i = 0; i < cells.length; i++) {
-        if (cells[i].getAttribute('data-image-id') === imageId) {
-          cells[i].classList.add('image-cell--unavailable');
-          var ph = cells[i].querySelector('.image-cell__unavailable');
-          if (!ph) {
-            ph = document.createElement('span');
-            ph.className = 'image-cell__unavailable';
-            cells[i].appendChild(ph);
-          }
-          ph.textContent = 'Image unavailable';
-          return;
-        }
-      }
-    }
-
-    function applyImageDataUrlToCell(imageId, dataUrl) {
-      if (!imageId || !dataUrl) return;
-      for (var ri = 0; ri < generationResults.length; ri++) {
-        if (generationResults[ri].id === imageId) {
-          generationResults[ri].imageUrl = dataUrl;
-          break;
-        }
-      }
-      var grid = document.getElementById('results-grid');
-      if (!grid) return;
+      if (!grid) return null;
       var cells = grid.querySelectorAll('.image-cell');
       for (var c = 0; c < cells.length; c++) {
-        if (cells[c].getAttribute('data-image-id') === imageId) {
-          var thumb = cells[c].querySelector('.image-cell__thumb');
-          if (thumb) thumb.src = dataUrl;
-          cells[c].classList.remove('image-cell--unavailable');
-          var un = cells[c].querySelector('.image-cell__unavailable');
-          if (un) un.remove();
-          return;
+        if (String(cells[c].getAttribute('data-image-id') || '') === idStr) {
+          return cells[c];
         }
       }
+      return null;
+    }
+
+    function markImageCellUnavailable(imageId) {
+      var cell = findResultCellByImageId(imageId);
+      if (!cell) return;
+      cell.classList.add('image-cell--unavailable');
+      var lw = cell.querySelector('.image-cell__loading');
+      if (lw) lw.classList.add('is-hidden');
+      var ph = cell.querySelector('.image-cell__unavailable');
+      if (!ph) {
+        ph = document.createElement('span');
+        ph.className = 'image-cell__unavailable';
+        cell.appendChild(ph);
+      }
+      ph.textContent = 'Image unavailable';
     }
 
     function onEditToggleClick() {
@@ -1355,12 +1312,12 @@
       _editRunning = true;
       var applyBtn = document.getElementById('btn-apply-edit');
       if (applyBtn) applyBtn.disabled = true;
-      setGeneratingTitle('Applying edits…', 'This may take up to a minute.');
+      setGeneratingTitle('Generating…');
       showView('generating');
       setGeneratingProgress(0);
       try {
-        var ids = await editImage(apiKey, sel.id, instruction);
-        var images = await pollImages(apiKey, ids, function (p) {
+        var ids = await editImage(apiKey, brandSessionId, sel.id, instruction);
+        var images = await pollImages(apiKey, brandSessionId, ids, function (p) {
           setGeneratingProgress(p);
         });
         var done = images[0];
@@ -1374,13 +1331,13 @@
         }
         if (idx >= 0) {
           generationResults[idx] = {
-            id: done.id,
+            id: String(done.id != null ? done.id : ''),
             imageUrl: newUrl,
             aspectRatio: generationResults[idx].aspectRatio,
           };
-          selectedImageId = done.id;
+          selectedImageId = String(done.id != null ? done.id : '');
         }
-        setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+        setGeneratingTitle('Generating…');
         showResults();
         showView('results');
         void loadCredits();
@@ -1852,11 +1809,46 @@
         case 'SELECTED_IMAGE_URL_ERROR':
           showToast('Select an image layer first', true);
           break;
-        case 'IMAGE_DATA_RESULT':
-          if (msg.dataUrl != null && msg.imageId != null) {
-            applyImageDataUrlToCell(String(msg.imageId), String(msg.dataUrl));
+        case 'IMAGE_DATA_RESULT': {
+          const { imageId, dataUrl } = msg;
+          const dataUrlStr = dataUrl != null ? String(dataUrl) : '';
+          if (!dataUrlStr) break;
+          const imageIdStr = imageId != null ? String(imageId) : '';
+          if (!imageIdStr) break;
+
+          const cell = document.querySelector(`[data-image-id="${imageIdStr}"]`);
+          if (!cell) break;
+
+          const imgEl = cell.querySelector('img');
+          if (imgEl) {
+            imgEl.src = dataUrlStr;
+            imgEl.style.display = 'block';
+            imgEl.style.width = '100%';
+            imgEl.style.height = '100%';
+            imgEl.style.objectFit = 'cover';
+            imgEl.style.position = 'relative';
+            imgEl.style.zIndex = '2';
+
+            setTimeout(function () {
+              Array.from(cell.children).forEach(function (child) {
+                if (child !== imgEl) {
+                  child.style.display = 'none';
+                  child.remove();
+                }
+              });
+              cell.style.background = 'transparent';
+            }, 50);
+          }
+
+          const result = generationResults.find(function (r) {
+            return String(r.id != null ? r.id : '') === imageIdStr;
+          });
+          if (result) {
+            result.imageUrl = dataUrlStr;
+            result.url = dataUrlStr;
           }
           break;
+        }
         case 'IMAGE_DATA_ERROR':
           if (msg.imageId != null) markImageCellUnavailable(String(msg.imageId));
           break;

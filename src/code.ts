@@ -20,7 +20,7 @@ type PluginMessage =
       items: Array<{ frameId: string; imageUrl: string; prompt: string; aspectRatio: string }>;
     }
   | { type: 'GET_SELECTED_IMAGE_URL' }
-  | { type: 'FETCH_IMAGE_DATA'; url: string; imageId?: string }
+  | { type: 'FETCH_IMAGE_DATA'; imageUrl?: string; url?: string; imageId?: string | number }
   | { type: 'CLOSE' };
 
 /** Payload describing the current canvas selection for the UI. */
@@ -199,6 +199,18 @@ function bytesToDataUrl(bytes: Uint8Array): string {
     mime = 'image/png';
   } else if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
     mime = 'image/gif';
+  } else if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    mime = 'image/webp';
   }
   let binary = '';
   const chunk = 0x8000;
@@ -496,25 +508,71 @@ figma.ui.onmessage = async (raw: unknown) => {
 
     /**
      * FETCH_IMAGE_DATA
-     * Downloads an image by URL, converts to base64 data URL.
-     * Used as fallback when ui.html cannot display an image directly
-     * due to CORS restrictions on Bloom CDN URLs.
+     * Fetches image bytes in the plugin sandbox (bypasses iframe CORS),
+     * converts to a base64 data URL, and posts IMAGE_DATA_RESULT to the UI.
      */
     case 'FETCH_IMAGE_DATA': {
+      const imageIdForUi =
+        msg.imageId !== undefined && msg.imageId !== null && String(msg.imageId).trim() !== ''
+          ? String(msg.imageId).trim()
+          : undefined;
       try {
-        const bytes = await downloadUrlToBytes(msg.url);
-        const dataUrl = bytesToDataUrl(bytes);
+        const rawUrl =
+          typeof msg.imageUrl === 'string' && msg.imageUrl.trim() !== ''
+            ? msg.imageUrl.trim()
+            : typeof msg.url === 'string' && msg.url.trim() !== ''
+              ? msg.url.trim()
+              : '';
+        if (!rawUrl) {
+          throw new Error('Missing image URL');
+        }
+        const response = await fetch(rawUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+
+        let mime = 'image/jpeg';
+        if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+          mime = 'image/png';
+        } else if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+          mime = 'image/gif';
+        } else if (
+          bytes.length >= 12 &&
+          bytes[0] === 0x52 &&
+          bytes[1] === 0x49 &&
+          bytes[2] === 0x46 &&
+          bytes[3] === 0x46 &&
+          bytes[8] === 0x57 &&
+          bytes[9] === 0x45 &&
+          bytes[10] === 0x42 &&
+          bytes[11] === 0x50
+        ) {
+          mime = 'image/webp';
+        } else if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+          mime = 'image/jpeg';
+        }
+
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          const sub = bytes.subarray(i, i + chunk);
+          binary += String.fromCharCode.apply(null, Array.from(sub));
+        }
+        const base64 = btoa(binary);
+        const dataUrl = `data:${mime};base64,${base64}`;
+
         figma.ui.postMessage({
           type: 'IMAGE_DATA_RESULT',
+          imageId: imageIdForUi,
           dataUrl,
-          imageId: typeof msg.imageId === 'string' ? msg.imageId : undefined,
         });
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
         figma.ui.postMessage({
           type: 'IMAGE_DATA_ERROR',
-          message,
-          imageId: typeof msg.imageId === 'string' ? msg.imageId : undefined,
+          imageId: imageIdForUi,
+          message: e instanceof Error ? e.message : 'Failed to load image',
         });
       }
       break;
