@@ -9,7 +9,9 @@
   "networkAccess": {
     "allowedDomains": [
       "https://www.trybloom.ai",
-      "https://storage.trybloom.ai"
+      "https://storage.trybloom.ai",
+      "https://fonts.googleapis.com",
+      "https://fonts.gstatic.com"
     ],
     "reasoning": "Bloom API for image generation and brand management"
   }

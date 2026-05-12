@@ -1,11 +1,14 @@
 const path = require('path')
-const CopyWebpackPlugin = require('copy-webpack-plugin')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
+const HtmlInlineScriptPlugin = require('html-inline-script-webpack-plugin')
 
 module.exports = {
-  entry: { code: './src/code.ts' },
+  entry: { code: './src/code.ts', ui: './src/ui-styles.ts' },
   module: {
-    rules: [{ test: /\.tsx?$/, use: 'ts-loader', exclude: /node_modules/ }]
+    rules: [
+      { test: /\.tsx?$/, use: 'ts-loader', exclude: /node_modules/ },
+      { test: /\.css$/, use: ['style-loader', 'css-loader'] },
+    ],
   },
   resolve: { extensions: ['.ts', '.js'] },
   output: {
@@ -16,10 +19,12 @@ module.exports = {
     new HtmlWebpackPlugin({
       template: './src/ui.html',
       filename: 'ui.html',
-      inject: false,
+      chunks: ['ui'],
+      inject: 'head',
+      scriptLoading: 'blocking',
     }),
-    new CopyWebpackPlugin({
-      patterns: [{ from: 'src/ui.css', to: 'ui.css' }],
+    new HtmlInlineScriptPlugin({
+      scriptMatchPattern: [/ui\.js$/],
     }),
   ],
 }
