@@ -2,58 +2,46 @@
  * bloom-client.ts
  *
  * Bloom REST API client for use inside the Figma plugin UI.
- * All functions use fetch() which is available in the ui.html iframe.
- *
- * API docs: https://www.trybloom.ai/api/v1/docs
+ * Success JSON is validated against OpenAPI 3.1.1 shapes in `bloom-api-schema.ts`.
+ * https://www.trybloom.ai/api/v1/docs
  */
+
+import {
+  extractBloomErrorMessage,
+  parseBrandDetailEnvelope,
+  parseBrandsListEnvelope,
+  parseCreditsEnvelope,
+  parseEditAcceptedEnvelope,
+  parseGenerationAcceptedEnvelope,
+  parseImagesListEnvelope,
+  parseOnboardBrandEnvelope,
+  toBloomBrand,
+  effectiveImageGenStatus,
+  type BloomBrand,
+  type BloomImageRow,
+} from './bloom-api-schema';
+
+export type {
+  BloomBrand,
+  BloomImageRow,
+  BloomImageListItem,
+  BloomImageGetData,
+  BloomAspectRatio,
+  BloomImageSource,
+  BloomImageActionType,
+  BloomImageGenStatus,
+} from './bloom-api-schema';
+
+export { parseGetImageEnvelope, BloomApiParseError } from './bloom-api-schema';
 
 const BLOOM_BASE = 'https://www.trybloom.ai/api/v1';
 
-// --- Types ---
-
-export interface BloomBrand {
-  id: string;
-  name: string;
-  url: string;
-  status: 'analyzing' | 'ready' | 'logo_required' | 'failed';
-  brandSessionId?: string;
-}
-
-export interface BloomImage {
-  id: string;
-  status: 'pending' | 'generating' | 'completed' | 'failed';
-  imageUrl?: string;
-}
-
-// --- Base fetcher ---
-
-function unwrapData<T>(body: unknown): T {
-  if (body && typeof body === 'object' && 'data' in body) {
-    return (body as { data: T }).data;
-  }
-  return body as T;
-}
-
-function extractErrorMessage(body: unknown): string | undefined {
-  if (!body || typeof body !== 'object') return undefined;
-  const o = body as Record<string, unknown>;
-  const err = o.error ?? o.message ?? o.detail;
-  if (typeof err === 'string') return err;
-  if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
-    return (err as { message: string }).message;
-  }
-  return undefined;
-}
-
 /**
- * Makes an authenticated request to the Bloom API.
- * Throws a descriptive error if the response is not ok.
+ * Parses JSON for a successful (2xx) Bloom HTTP response.
+ * On success returns `unknown` only at the wire boundary — callers must pass
+ * the value through a `parse*Envelope` function in `bloom-api-schema.ts`.
  */
-export async function bloomFetch<T>(
-  path: string,
-  apiKey: string,
-  options: RequestInit = {}
-): Promise<T> {
+async function bloomFetchOkJson(path: string, apiKey: string, options: RequestInit = {}): Promise<unknown> {
   try {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${BLOOM_BASE}${normalizedPath}`;
@@ -76,11 +64,11 @@ export async function bloomFetch<T>(
     }
 
     if (!res.ok) {
-      const detail = extractErrorMessage(body) ?? (typeof body === 'string' ? body : res.statusText);
+      const detail = extractBloomErrorMessage(body) ?? (typeof body === 'string' ? body : res.statusText);
       throw new Error(`Bloom API ${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`);
     }
 
-    return body as T;
+    return body;
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('Bloom API')) {
       throw e;
@@ -90,62 +78,17 @@ export async function bloomFetch<T>(
   }
 }
 
-// --- Brand functions ---
-
-function normalizeBrand(raw: Record<string, unknown>): BloomBrand {
-  const id = String(raw.id ?? '');
-  const name = String(raw.name ?? '');
-  const url = String(raw.url ?? raw.brand_url ?? raw.brandUrl ?? '');
-  const status = raw.status as BloomBrand['status'];
-  const brandSessionId =
-    raw.brandSessionId !== undefined
-      ? String(raw.brandSessionId)
-      : raw.brand_session_id !== undefined
-        ? String(raw.brand_session_id)
-        : undefined;
-  return {
-    id,
-    name,
-    url,
-    status,
-    brandSessionId: brandSessionId || undefined,
-  };
-}
-
-function extractBrandsPayload(body: unknown): { brands: unknown[]; nextCursor?: string | null } {
-  if (!body || typeof body !== 'object') {
-    return { brands: [] };
-  }
-  const root = body as Record<string, unknown>;
-
-  if (Array.isArray(root.brands)) {
-    return {
-      brands: root.brands,
-      nextCursor: (root.next_cursor ?? root.nextCursor) as string | null | undefined,
-    };
-  }
-
-  const data = root.data;
-  if (data && typeof data === 'object') {
-    const d = data as Record<string, unknown>;
-    if (Array.isArray(d.brands)) {
-      return {
-        brands: d.brands,
-        nextCursor: (d.next_cursor ?? d.nextCursor) as string | null | undefined,
-      };
-    }
-  }
-
-  return { brands: [] };
+function isTerminalGenStatus(s: ReturnType<typeof effectiveImageGenStatus>): boolean {
+  return s === 'completed' || s === 'failed';
 }
 
 /**
- * Validates an API key by attempting to list brands.
- * Returns true if the key is valid, false otherwise.
+ * Validates an API key by attempting to list brands and verifying the response envelope.
  */
 export async function validateApiKey(apiKey: string): Promise<boolean> {
   try {
-    await bloomFetch<unknown>('/brands?limit=1', apiKey, { method: 'GET' });
+    const body = await bloomFetchOkJson('/brands?limit=1', apiKey, { method: 'GET' });
+    parseBrandsListEnvelope(body);
     return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -157,8 +100,7 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
 }
 
 /**
- * Returns all brands for this API key.
- * Handles multiple possible response shapes from the API.
+ * Returns all brands for this API key (cursor pagination via `nextCursor` / `hasMore`).
  */
 export async function listBrands(apiKey: string): Promise<BloomBrand[]> {
   const out: BloomBrand[] = [];
@@ -169,17 +111,14 @@ export async function listBrands(apiKey: string): Promise<BloomBrand[]> {
     qs.set('limit', '100');
     if (cursor) qs.set('cursor', cursor);
 
-    const raw = await bloomFetch<unknown>(`/brands?${qs.toString()}`, apiKey, { method: 'GET' });
-    const { brands, nextCursor } = extractBrandsPayload(raw);
-
-    for (const item of brands) {
-      if (item && typeof item === 'object') {
-        out.push(normalizeBrand(item as Record<string, unknown>));
-      }
+    const body = await bloomFetchOkJson(`/brands?${qs.toString()}`, apiKey, { method: 'GET' });
+    const page = parseBrandsListEnvelope(body);
+    for (const item of page.brands) {
+      out.push(toBloomBrand(item));
     }
 
-    const next = nextCursor ?? undefined;
-    if (!next || brands.length === 0) break;
+    const next = typeof page.nextCursor === 'string' && page.nextCursor.length > 0 ? page.nextCursor : undefined;
+    if (!page.hasMore || !next || page.brands.length === 0) break;
     cursor = next;
   }
 
@@ -187,74 +126,34 @@ export async function listBrands(apiKey: string): Promise<BloomBrand[]> {
 }
 
 /**
- * Starts onboarding a new brand from a website URL.
- * Returns immediately — brand will be in 'analyzing' status.
- * Poll getBrand() until status is 'ready'.
+ * POST /brands — returns 202; `data` contains id, status, optional logoError.
  */
 export async function onboardBrand(apiKey: string, url: string): Promise<BloomBrand> {
-  const raw = await bloomFetch<unknown>(
-    '/brands',
-    apiKey,
-    {
-      method: 'POST',
-      body: JSON.stringify({ url }),
-    }
-  );
-
-  const data = unwrapData<Record<string, unknown>>(raw);
-  const id = String(data.id ?? '');
-  const status = data.status as BloomBrand['status'];
-  return {
-    id,
+  const body = await bloomFetchOkJson('/brands', apiKey, {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  });
+  const d = parseOnboardBrandEnvelope(body);
+  return toBloomBrand({
+    id: d.id,
     name: '',
     url,
-    status,
-    brandSessionId: id,
-  };
+    status: d.status,
+    logoError: d.logoError,
+  });
 }
 
 /**
- * Gets a single brand by ID.
- * Use this to poll for onboarding completion.
+ * GET /brands/{id}
  */
 export async function getBrand(apiKey: string, brandId: string): Promise<BloomBrand> {
-  const raw = await bloomFetch<unknown>(`/brands/${encodeURIComponent(brandId)}`, apiKey, { method: 'GET' });
-  const data = unwrapData<Record<string, unknown>>(raw);
-  return normalizeBrand(data);
-}
-
-// --- Image functions ---
-
-/**
- * Image IDs from POST /images/generations ({ data: { ids } })
- * or POST /images/{id}/edit ({ data: { id } }).
- */
-function parseGenerationImageIds(body: unknown): string[] {
-  const data = unwrapData<unknown>(body);
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return [];
-  }
-  const o = data as Record<string, unknown>;
-  const rawIds = o.ids;
-  if (Array.isArray(rawIds) && rawIds.length > 0) {
-    return rawIds
-      .map((x) => (typeof x === 'string' ? x : x != null ? String(x) : ''))
-      .filter((x) => x !== '');
-  }
-  if (o.id != null && String(o.id) !== '') {
-    return [String(o.id)];
-  }
-  return [];
+  const body = await bloomFetchOkJson(`/brands/${encodeURIComponent(brandId)}`, apiKey, { method: 'GET' });
+  const detail = parseBrandDetailEnvelope(body);
+  return toBloomBrand(detail);
 }
 
 /**
- * Starts generating images using the Bloom API.
- * Returns image IDs immediately — images generate asynchronously.
- * Poll `pollImages(apiKey, brandSessionId, ids, …)` until all images are complete.
- *
- * @param brandSessionId - Use brand.brandSessionId or brand.id
- * @param aspectRatio - One of: "1:1" | "4:5" | "9:16" | "16:9"
- * @param variantCount - Number of variants to generate (1-5)
+ * POST /images/generations — returns image IDs; response includes variantGroupId and status.
  */
 export async function generateImages(
   apiKey: string,
@@ -264,31 +163,21 @@ export async function generateImages(
   variantCount: number
 ): Promise<string[]> {
   const clamped = Math.min(5, Math.max(1, Math.floor(variantCount)));
-  const raw = await bloomFetch<unknown>(
-    '/images/generations',
-    apiKey,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        prompt,
-        brandSessionId,
-        brand_session_id: brandSessionId,
-        aspectRatio,
-        aspect_ratio: aspectRatio,
-        variantCount: clamped,
-        variant_count: clamped,
-      }),
-    }
-  );
-  const ids = parseGenerationImageIds(raw);
-  if (ids.length === 0) {
-    throw new Error('Bloom API: image generation returned no image IDs');
-  }
-  return ids;
+  const body = await bloomFetchOkJson('/images/generations', apiKey, {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt,
+      brandSessionId,
+      aspectRatio,
+      variantCount: clamped,
+    }),
+  });
+  const accepted = parseGenerationAcceptedEnvelope(body);
+  return accepted.ids;
 }
 
 /**
- * Applies an edit prompt to an existing image (POST /images/{id}/edit).
+ * POST /images/{id}/edit
  */
 export async function editImage(
   apiKey: string,
@@ -296,60 +185,26 @@ export async function editImage(
   imageId: string,
   prompt: string
 ): Promise<string[]> {
-  const raw = await bloomFetch<unknown>(
-    `/images/${encodeURIComponent(imageId)}/edit`,
-    apiKey,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        brandSessionId,
-        brand_session_id: brandSessionId,
-        prompt,
-      }),
-    }
-  );
-  const ids = parseGenerationImageIds(raw);
-  if (ids.length > 0) return ids;
-  throw new Error('Bloom API: edit returned no image IDs');
-}
-
-function parseImagesList(body: unknown): BloomImage[] {
-  const root = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
-  let images: unknown[] = [];
-
-  const dataObj = unwrapData<Record<string, unknown>>(body);
-  if (dataObj && typeof dataObj === 'object' && Array.isArray(dataObj.images)) {
-    images = dataObj.images as unknown[];
-  } else if (Array.isArray(root.images)) {
-    images = root.images;
-  } else if (root.data && typeof root.data === 'object' && Array.isArray((root.data as Record<string, unknown>).images)) {
-    images = (root.data as Record<string, unknown>).images as unknown[];
-  }
-
-  return images.map((item) => {
-    const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
-    const id = String(o.id ?? '');
-    const status = (o.status ?? 'pending') as BloomImage['status'];
-    const imageUrl =
-      (o.imageUrl ?? o.image_url) !== undefined ? String(o.imageUrl ?? o.image_url) : undefined;
-    return { id, status, imageUrl };
+  const body = await bloomFetchOkJson(`/images/${encodeURIComponent(imageId)}/edit`, apiKey, {
+    method: 'POST',
+    body: JSON.stringify({
+      brandSessionId,
+      prompt,
+    }),
   });
-}
-
-function isTerminalStatus(s: BloomImage['status'] | undefined): boolean {
-  return s === 'completed' || s === 'failed';
+  const accepted = parseEditAcceptedEnvelope(body);
+  return [accepted.id];
 }
 
 /**
  * Polls the Bloom API until all images are complete.
- * GET /images uses comma-separated `ids`, `includeUrls=true` for usable URLs, optional `brandSessionId`.
  */
 export async function pollImages(
   apiKey: string,
   brandSessionId: string,
   imageIds: string[],
   onProgress: (percent: number) => void
-): Promise<BloomImage[]> {
+): Promise<BloomImageRow[]> {
   if (imageIds.length === 0) {
     onProgress(100);
     return [];
@@ -357,7 +212,7 @@ export async function pollImages(
 
   const deadline = Date.now() + 120_000;
   const idSet = new Set(imageIds.map((id) => String(id).trim()).filter(Boolean));
-  let lastImages: BloomImage[] = [];
+  let lastImages: BloomImageRow[] = [];
 
   onProgress(0);
 
@@ -371,8 +226,9 @@ export async function pollImages(
     const bs = String(brandSessionId || '').trim();
     if (bs) qs.set('brandSessionId', bs);
 
-    const raw = await bloomFetch<unknown>(`/images?${qs.toString()}`, apiKey, { method: 'GET' });
-    lastImages = parseImagesList(raw);
+    const body = await bloomFetchOkJson(`/images?${qs.toString()}`, apiKey, { method: 'GET' });
+    const list = parseImagesListEnvelope(body);
+    lastImages = list.images;
 
     const byId = new Map(
       lastImages.map((im) => [String(im.id || '').trim(), im] as const).filter(([k]) => k !== '')
@@ -382,9 +238,11 @@ export async function pollImages(
     for (const id of imageIds) {
       const tid = String(id).trim();
       const im = byId.get(tid);
-      if (im && isTerminalStatus(im.status)) {
+      if (!im) continue;
+      const st = effectiveImageGenStatus(im);
+      if (isTerminalGenStatus(st)) {
         terminal += 1;
-        if (im.status === 'failed') failed = true;
+        if (st === 'failed') failed = true;
       }
     }
 
@@ -397,9 +255,11 @@ export async function pollImages(
     if (terminal === imageIds.length) {
       const ordered = imageIds
         .map((id) => byId.get(String(id).trim()))
-        .filter((x): x is BloomImage => x !== undefined);
+        .filter((x): x is BloomImageRow => x !== undefined);
       onProgress(100);
-      return ordered.length === imageIds.length ? ordered : lastImages.filter((im) => idSet.has(String(im.id || '').trim()));
+      return ordered.length === imageIds.length
+        ? ordered
+        : lastImages.filter((im) => idSet.has(String(im.id || '').trim()));
     }
   }
 
@@ -407,21 +267,13 @@ export async function pollImages(
 }
 
 /**
- * Gets the credit balance for this API key.
+ * GET /credits — returns numeric balance; unlimited accounts return `Number.MAX_SAFE_INTEGER`.
  */
 export async function getCredits(apiKey: string): Promise<number> {
-  const raw = await bloomFetch<unknown>('/credits', apiKey, { method: 'GET' });
-  const data = unwrapData<Record<string, unknown>>(raw);
-  const balance = data.balance ?? data.creditBalance ?? data.credit_balance;
-  if (typeof balance === 'number' && Number.isFinite(balance)) {
-    return balance;
-  }
-  if (typeof balance === 'string' && balance.trim() !== '' && Number.isFinite(Number(balance))) {
-    return Number(balance);
-  }
-  const unlimited = data.unlimited === true;
-  if (unlimited) {
+  const body = await bloomFetchOkJson('/credits', apiKey, { method: 'GET' });
+  const credits = parseCreditsEnvelope(body);
+  if (credits.unlimited) {
     return Number.MAX_SAFE_INTEGER;
   }
-  throw new Error('Bloom API: credits response did not include a numeric balance');
+  return credits.balance;
 }

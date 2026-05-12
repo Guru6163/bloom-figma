@@ -255,7 +255,7 @@
     }
 
     /* -------------------------------------------------------------------------- */
-    /* Bloom REST client (inlined from bloom-client.ts — Figma UI cannot import modules) */
+    /* Bloom REST client (inlined from bloom-client.ts — keep in sync; shapes = OpenAPI 3.1.1) */
     /* -------------------------------------------------------------------------- */
 
     var BLOOM_BASE = 'https://www.trybloom.ai/api/v1';
@@ -328,7 +328,8 @@
      */
     function validateApiKey(apiKey) {
       return bloomFetch('/brands?limit=1', apiKey, { method: 'GET' })
-        .then(function () {
+        .then(function (raw) {
+          parseBrandsListEnvelopeUi(raw);
           return true;
         })
         .catch(function (e) {
@@ -340,58 +341,187 @@
         });
     }
 
-    function unwrapData(body) {
-      if (body && typeof body === 'object' && 'data' in body) {
-        return body.data;
+    function isRecord(v) {
+      return v !== null && typeof v === 'object' && !Array.isArray(v);
+    }
+
+    function requireBloomDataUi(body, ctx) {
+      if (!isRecord(body) || !('data' in body)) {
+        throw new Error('Bloom API (' + ctx + '): response must be a JSON object with a data property');
       }
-      return body;
+      var inner = body.data;
+      if (!isRecord(inner)) {
+        throw new Error('Bloom API (' + ctx + '): data must be an object');
+      }
+      return inner;
+    }
+
+    var _BRAND_ST_UI = ['analyzing', 'ready', 'logo_required', 'failed'];
+
+    function parseBrandListItemUi(raw, ctx, index) {
+      if (!isRecord(raw)) {
+        throw new Error('Bloom API (' + ctx + '): brands[' + index + '] must be an object');
+      }
+      var id = raw.id;
+      var name = raw.name;
+      var url = raw.url;
+      var status = raw.status;
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].id must be a non-empty string');
+      }
+      if (typeof name !== 'string') {
+        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].name must be a string');
+      }
+      if (typeof url !== 'string') {
+        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].url must be a string');
+      }
+      if (typeof status !== 'string' || _BRAND_ST_UI.indexOf(status) === -1) {
+        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].status invalid');
+      }
+      var out = { id: id, name: name, url: url, status: status };
+      if (typeof raw.imageCount === 'number' && isFinite(raw.imageCount)) out.imageCount = raw.imageCount;
+      if (typeof raw.workspaceId === 'string') out.workspaceId = raw.workspaceId;
+      if (typeof raw.workspaceName === 'string') out.workspaceName = raw.workspaceName;
+      if (typeof raw.createdAt === 'string') out.createdAt = raw.createdAt;
+      return out;
+    }
+
+    function parseBrandsListEnvelopeUi(body, ctx) {
+      if (ctx === void 0) ctx = 'GET /brands';
+      var d = requireBloomDataUi(body, ctx);
+      if (!Array.isArray(d.brands)) {
+        throw new Error('Bloom API (' + ctx + '): data.brands must be an array');
+      }
+      if (typeof d.hasMore !== 'boolean') {
+        throw new Error('Bloom API (' + ctx + '): data.hasMore must be a boolean');
+      }
+      var nc = d.nextCursor;
+      if (!(typeof nc === 'string' || nc === null)) {
+        throw new Error('Bloom API (' + ctx + '): data.nextCursor must be string or null');
+      }
+      var brands = d.brands.map(function (item, i) {
+        return parseBrandListItemUi(item, ctx, i);
+      });
+      return { brands: brands, nextCursor: nc, hasMore: d.hasMore };
+    }
+
+    /** POST /brands — data envelope (OpenAPI) */
+    function parseOnboardBrandEnvelopeUi(body, ctx) {
+      if (ctx === void 0) ctx = 'POST /brands';
+      var d = requireBloomDataUi(body, ctx);
+      if (typeof d.id !== 'string' || d.id.length === 0) {
+        throw new Error('Bloom API (' + ctx + '): data.id must be a non-empty string');
+      }
+      if (typeof d.status !== 'string' || _BRAND_ST_UI.indexOf(d.status) === -1) {
+        throw new Error('Bloom API (' + ctx + '): data.status invalid');
+      }
+      var out = { id: d.id, status: d.status };
+      if ('logoError' in d) {
+        var le = d.logoError;
+        if (le !== null && le !== undefined && typeof le !== 'string') {
+          throw new Error('Bloom API (' + ctx + '): data.logoError must be string or null');
+        }
+        if (typeof le === 'string') out.logoError = le;
+        else if (le === null) out.logoError = null;
+      }
+      return out;
+    }
+
+    /** GET /brands/{id} — data envelope (OpenAPI) */
+    function parseBrandDetailEnvelopeUi(body, ctx) {
+      if (ctx === void 0) ctx = 'GET /brands/{id}';
+      var d = requireBloomDataUi(body, ctx);
+      var base = parseBrandListItemUi(d, ctx, 0);
+      var out = Object.assign({}, base);
+      if ('logoUrl' in d) {
+        var lv = d.logoUrl;
+        if (lv !== null && lv !== undefined && typeof lv !== 'string') {
+          throw new Error('Bloom API (' + ctx + '): data.logoUrl must be string or null');
+        }
+        if (typeof lv === 'string') out.logoUrl = lv;
+        else if (lv === null) out.logoUrl = null;
+      }
+      if ('logoError' in d) {
+        var le = d.logoError;
+        if (le !== null && le !== undefined && typeof le !== 'string') {
+          throw new Error('Bloom API (' + ctx + '): data.logoError must be string or null');
+        }
+        if (typeof le === 'string') out.logoError = le;
+        else if (le === null) out.logoError = null;
+      }
+      if (Array.isArray(d.colors)) {
+        out.colors = d.colors.filter(function (x) {
+          return typeof x === 'string';
+        });
+      }
+      if (Array.isArray(d.fonts)) {
+        out.fonts = d.fonts.filter(function (x) {
+          return typeof x === 'string';
+        });
+      }
+      if (typeof d.aesthetic === 'string') out.aesthetic = d.aesthetic;
+      else if (d.aesthetic === null) out.aesthetic = null;
+      if (typeof d.summary === 'string') out.summary = d.summary;
+      return out;
+    }
+
+    /** GET /credits — data envelope (OpenAPI) */
+    function parseCreditsEnvelopeUi(body, ctx) {
+      if (ctx === void 0) ctx = 'GET /credits';
+      var d = requireBloomDataUi(body, ctx);
+      if (typeof d.unlimited !== 'boolean') {
+        throw new Error('Bloom API (' + ctx + '): data.unlimited must be a boolean');
+      }
+      if (d.unlimited) {
+        var b = d.balance;
+        var balance = typeof b === 'number' && isFinite(b) ? b : 0;
+        return { balance: balance, unlimited: true };
+      }
+      var balance = d.balance;
+      if (typeof balance !== 'number' || !isFinite(balance)) {
+        throw new Error('Bloom API (' + ctx + '): data.balance must be a finite number when unlimited is false');
+      }
+      return { balance: balance, unlimited: false };
+    }
+
+    function optString(r, key) {
+      var x = r[key];
+      if (x === undefined || x === null) return undefined;
+      return String(x);
+    }
+
+    function stringArrayField(r, key) {
+      var v = r[key];
+      if (!Array.isArray(v)) return undefined;
+      return v.filter(function (x) {
+        return typeof x === 'string';
+      });
     }
 
     function normalizeBrand(raw) {
-      var id = String(raw.id != null ? raw.id : '');
-      var name = String(raw.name != null ? raw.name : '');
-      var url = String(raw.url != null ? raw.url : raw.brand_url != null ? raw.brand_url : raw.brandUrl != null ? raw.brandUrl : '');
-      var status = raw.status;
-      var brandSessionId =
-        raw.brandSessionId !== undefined
-          ? String(raw.brandSessionId)
-          : raw.brand_session_id !== undefined
-            ? String(raw.brand_session_id)
-            : undefined;
+      var r = isRecord(raw) ? raw : {};
+      var id = String(r.id != null ? r.id : '');
+      var ic = r.imageCount;
       return {
         id: id,
-        name: name,
-        url: url,
-        status: status,
-        brandSessionId: brandSessionId || undefined,
+        name: String(r.name != null ? r.name : ''),
+        url: String(r.url != null ? r.url : ''),
+        status: r.status,
+        brandSessionId: id || undefined,
+        logoUrl: optString(r, 'logoUrl'),
+        logoError: optString(r, 'logoError'),
+        imageCount: typeof ic === 'number' && isFinite(ic) ? ic : undefined,
+        workspaceId: optString(r, 'workspaceId'),
+        workspaceName: optString(r, 'workspaceName'),
+        createdAt: optString(r, 'createdAt'),
+        colors: stringArrayField(r, 'colors'),
+        fonts: stringArrayField(r, 'fonts'),
+        aesthetic: optString(r, 'aesthetic'),
+        summary: optString(r, 'summary'),
       };
     }
 
-    function extractBrandsPayload(body) {
-      if (!body || typeof body !== 'object') {
-        return { brands: [] };
-      }
-      var root = body;
-      if (Array.isArray(root.brands)) {
-        return {
-          brands: root.brands,
-          nextCursor: root.next_cursor != null ? root.next_cursor : root.nextCursor,
-        };
-      }
-      var data = root.data;
-      if (data && typeof data === 'object' && Array.isArray(data.brands)) {
-        return {
-          brands: data.brands,
-          nextCursor: data.next_cursor != null ? data.next_cursor : data.nextCursor,
-        };
-      }
-      return { brands: [] };
-    }
-
-    /**
-     * Returns all brands for this API key.
-     * Handles multiple possible response shapes from the API.
-     */
+    /** GET /brands — strict OpenAPI envelope (see bloom-api-schema.ts) */
     function listBrands(apiKey) {
       var out = [];
       var cursor = undefined;
@@ -400,17 +530,15 @@
         qs.set('limit', '100');
         if (cursor) qs.set('cursor', cursor);
         return bloomFetch('/brands?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
-          var parsed = extractBrandsPayload(raw);
-          var brands = parsed.brands;
-          var nextCursor = parsed.nextCursor;
+          var page = parseBrandsListEnvelopeUi(raw);
+          var brands = page.brands;
+          var nextCursor = page.nextCursor;
+          var hasMore = page.hasMore;
           for (var i = 0; i < brands.length; i++) {
-            var item = brands[i];
-            if (item && typeof item === 'object') {
-              out.push(normalizeBrand(item));
-            }
+            out.push(normalizeBrand(brands[i]));
           }
-          var next = nextCursor != null ? nextCursor : undefined;
-          if (!next || brands.length === 0) {
+          var next = typeof nextCursor === 'string' && nextCursor.length > 0 ? nextCursor : undefined;
+          if (!hasMore || !next || brands.length === 0) {
             return out;
           }
           cursor = next;
@@ -421,65 +549,72 @@
     }
 
     /**
-     * Starts onboarding a new brand from a website URL.
-     * Returns immediately — brand will be in 'analyzing' status.
-     * Poll getBrand() until status is 'ready'.
+     * POST /brands — 202, { data: { id, status, logoError? } }
      */
     function onboardBrand(apiKey, url) {
       return bloomFetch('/brands', apiKey, {
         method: 'POST',
         body: JSON.stringify({ url: url }),
       }).then(function (raw) {
-        var data = unwrapData(raw);
-        var id = String(data.id != null ? data.id : '');
-        var status = data.status;
-        return {
-          id: id,
+        var d = parseOnboardBrandEnvelopeUi(raw);
+        var row = {
+          id: d.id,
           name: '',
           url: url,
-          status: status,
-          brandSessionId: id,
+          status: d.status,
+          brandSessionId: d.id || undefined,
         };
+        if (d.logoError !== undefined && d.logoError !== null) row.logoError = String(d.logoError);
+        return row;
       });
     }
 
-    /**
-     * Gets a single brand by ID.
-     * Use this to poll for onboarding completion.
-     */
+    /** GET /brands/{id} — { data: { … } } */
     function getBrand(apiKey, brandId) {
       return bloomFetch('/brands/' + encodeURIComponent(brandId), apiKey, { method: 'GET' }).then(function (raw) {
-        var data = unwrapData(raw);
-        return normalizeBrand(data);
+        var detail = parseBrandDetailEnvelopeUi(raw);
+        return normalizeBrand(detail);
       });
     }
 
-    /**
-     * POST /images/generations and POST /images/{id}/edit return
-     * { data: { ids: string[] } } or { data: { id: string } } respectively.
-     */
-    function parseGenerationImageIds(body) {
-      var data = unwrapData(body);
-      if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
-      var rawIds = data.ids;
-      if (Array.isArray(rawIds) && rawIds.length > 0) {
-        return rawIds
-          .map(function (x) {
-            return typeof x === 'string' ? x : x != null ? String(x) : '';
-          })
-          .filter(function (x) {
-            return x !== '';
-          });
+    function parseGenerationAcceptedUi(raw, ctx) {
+      if (ctx === void 0) ctx = 'POST /images/generations';
+      var d = requireBloomDataUi(raw, ctx);
+      var idsRaw = d.ids;
+      if (!Array.isArray(idsRaw) || idsRaw.length === 0) {
+        throw new Error('Bloom API (' + ctx + '): data.ids must be a non-empty array');
       }
-      if (data.id != null && String(data.id) !== '') return [String(data.id)];
-      return [];
+      var ids = idsRaw.map(function (x, i) {
+        if (typeof x !== 'string' || x.length === 0) {
+          throw new Error('Bloom API (' + ctx + '): data.ids[' + i + '] must be a non-empty string');
+        }
+        return x;
+      });
+      if (!('variantGroupId' in d)) {
+        throw new Error('Bloom API (' + ctx + '): data.variantGroupId is required');
+      }
+      var vgid = d.variantGroupId;
+      if (vgid !== null && (typeof vgid !== 'string' || vgid.length === 0)) {
+        throw new Error('Bloom API (' + ctx + '): data.variantGroupId must be uuid string or null');
+      }
+      if (d.status !== 'pending') {
+        throw new Error('Bloom API (' + ctx + '): data.status must be "pending"');
+      }
+      return { ids: ids, variantGroupId: vgid, status: 'pending' };
     }
 
-    /**
-     * Starts generating images using the Bloom API.
-     * Returns image IDs immediately — images generate asynchronously.
-     * Poll pollImages() until all images are complete.
-     */
+    function parseEditAcceptedUi(raw, ctx) {
+      if (ctx === void 0) ctx = 'POST /images/{id}/edit';
+      var d = requireBloomDataUi(raw, ctx);
+      if (typeof d.id !== 'string' || d.id.length === 0) {
+        throw new Error('Bloom API (' + ctx + '): data.id must be a non-empty string');
+      }
+      if (d.status !== 'pending') {
+        throw new Error('Bloom API (' + ctx + '): data.status must be "pending"');
+      }
+      return { id: d.id, status: 'pending' };
+    }
+
     function generateImages(apiKey, brandSessionId, prompt, aspectRatio, variantCount) {
       var clamped = Math.min(5, Math.max(1, Math.floor(variantCount)));
       return bloomFetch('/images/generations', apiKey, {
@@ -487,18 +622,12 @@
         body: JSON.stringify({
           prompt: prompt,
           brandSessionId: brandSessionId,
-          brand_session_id: brandSessionId,
           aspectRatio: aspectRatio,
-          aspect_ratio: aspectRatio,
           variantCount: clamped,
-          variant_count: clamped,
         }),
       }).then(function (raw) {
-        var ids = parseGenerationImageIds(raw);
-        if (ids.length === 0) {
-          throw new Error('Bloom API: image generation returned no image IDs');
-        }
-        return ids;
+        var gen = parseGenerationAcceptedUi(raw);
+        return gen.ids;
       });
     }
 
@@ -507,37 +636,153 @@
         method: 'POST',
         body: JSON.stringify({
           brandSessionId: brandSessionId,
-          brand_session_id: brandSessionId,
           prompt: instruction,
         }),
       }).then(function (raw) {
-        var ids = parseGenerationImageIds(raw);
-        if (ids.length > 0) return ids;
-        throw new Error('Bloom API: edit returned no image IDs');
+        var ed = parseEditAcceptedUi(raw);
+        return [ed.id];
       });
     }
 
-    function parseImagesList(body) {
-      var root = body && typeof body === 'object' ? body : {};
-      var images = [];
-      var dataObj = unwrapData(body);
-      if (dataObj && typeof dataObj === 'object' && !Array.isArray(dataObj) && Array.isArray(dataObj.images)) {
-        images = dataObj.images;
-      } else if (Array.isArray(root.images)) {
-        images = root.images;
-      } else if (root.data && typeof root.data === 'object' && Array.isArray(root.data.images)) {
-        images = root.data.images;
+    var _LIST_IMG_KEYS_UI = [
+      'id',
+      'source',
+      'prompt',
+      'description',
+      'aspectRatio',
+      'width',
+      'height',
+      'actionType',
+      'variantGroupId',
+      'status',
+      'workspaceId',
+      'workspaceName',
+      'createdAt',
+    ];
+    var _IMG_SRC_UI = ['generated', 'uploaded', 'scraped'];
+    var _IMG_ACT_UI = ['generation', 'edit', 'resize', 'variant', 'recreate'];
+    var _IMG_ST_UI = ['pending', 'generating', 'completed', 'failed'];
+    var _ASP_UI = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
+
+    function _strOrNullUi(v, loc, ctx) {
+      if (v === null) return null;
+      if (typeof v !== 'string') {
+        throw new Error('Bloom API (' + ctx + '): ' + loc + ' must be string or null');
       }
-      return images.map(function (item) {
-        var o = item && typeof item === 'object' ? item : {};
-        var id = String(o.id != null ? o.id : '');
-        var status = o.status != null ? o.status : 'pending';
-        var rawUrl =
-          o.imageUrl !== undefined || o.image_url !== undefined
-            ? String(o.imageUrl != null ? o.imageUrl : o.image_url)
-            : undefined;
-        var imageUrl = rawUrl !== undefined ? getImageUrl(rawUrl) : undefined;
-        return { id: id, status: status, imageUrl: imageUrl };
+      return v;
+    }
+
+    function _numOrNullUi(v, loc, ctx) {
+      if (v === null) return null;
+      if (typeof v !== 'number' || !isFinite(v)) {
+        throw new Error('Bloom API (' + ctx + '): ' + loc + ' must be number or null');
+      }
+      return v;
+    }
+
+    function _aspOrNullUi(v, loc, ctx) {
+      if (v === null) return null;
+      if (typeof v !== 'string' || _ASP_UI.indexOf(v) === -1) {
+        throw new Error('Bloom API (' + ctx + '): ' + loc + ' invalid aspect ratio');
+      }
+      return v;
+    }
+
+    function parseImageListItemUi(raw, ctx, index) {
+      if (!isRecord(raw)) {
+        throw new Error('Bloom API (' + ctx + '): images[' + index + '] must be an object');
+      }
+      for (var ki = 0; ki < _LIST_IMG_KEYS_UI.length; ki++) {
+        if (!(_LIST_IMG_KEYS_UI[ki] in raw)) {
+          throw new Error('Bloom API (' + ctx + '): images[' + index + '] missing ' + _LIST_IMG_KEYS_UI[ki]);
+        }
+      }
+      if (typeof raw.id !== 'string' || raw.id.length === 0) {
+        throw new Error('Bloom API (' + ctx + '): images[' + index + '].id invalid');
+      }
+      if (typeof raw.source !== 'string' || _IMG_SRC_UI.indexOf(raw.source) === -1) {
+        throw new Error('Bloom API (' + ctx + '): images[' + index + '].source invalid');
+      }
+      var workspaceName = raw.workspaceName;
+      if (typeof workspaceName !== 'string') {
+        throw new Error('Bloom API (' + ctx + '): images[' + index + '].workspaceName must be a string');
+      }
+      var createdAt = raw.createdAt;
+      if (typeof createdAt !== 'string') {
+        throw new Error('Bloom API (' + ctx + '): images[' + index + '].createdAt must be a string');
+      }
+      var actionType = raw.actionType;
+      if (actionType !== null && (typeof actionType !== 'string' || _IMG_ACT_UI.indexOf(actionType) === -1)) {
+        throw new Error('Bloom API (' + ctx + '): images[' + index + '].actionType invalid');
+      }
+      var status = raw.status;
+      if (status !== null && (typeof status !== 'string' || _IMG_ST_UI.indexOf(status) === -1)) {
+        throw new Error('Bloom API (' + ctx + '): images[' + index + '].status invalid');
+      }
+      var row = {
+        id: raw.id,
+        source: raw.source,
+        prompt: _strOrNullUi(raw.prompt, 'images[' + index + '].prompt', ctx),
+        description: _strOrNullUi(raw.description, 'images[' + index + '].description', ctx),
+        aspectRatio: _aspOrNullUi(raw.aspectRatio, 'images[' + index + '].aspectRatio', ctx),
+        width: _numOrNullUi(raw.width, 'images[' + index + '].width', ctx),
+        height: _numOrNullUi(raw.height, 'images[' + index + '].height', ctx),
+        actionType: actionType,
+        variantGroupId:
+          raw.variantGroupId === null || typeof raw.variantGroupId === 'string'
+            ? raw.variantGroupId
+            : (function () {
+                throw new Error('Bloom API (' + ctx + '): images[' + index + '].variantGroupId invalid');
+              })(),
+        status: status,
+        workspaceId: _strOrNullUi(raw.workspaceId, 'images[' + index + '].workspaceId', ctx),
+        workspaceName: workspaceName,
+        createdAt: createdAt,
+      };
+      if ('brandSessionId' in raw && raw.brandSessionId != null) {
+        if (typeof raw.brandSessionId !== 'string') {
+          throw new Error('Bloom API (' + ctx + '): images[' + index + '].brandSessionId invalid');
+        }
+        row.brandSessionId = raw.brandSessionId;
+      }
+      if ('imageUrl' in raw) {
+        var u = raw.imageUrl;
+        if (u !== null && u !== undefined && typeof u !== 'string') {
+          throw new Error('Bloom API (' + ctx + '): images[' + index + '].imageUrl invalid');
+        }
+        row.imageUrl = u;
+      }
+      return row;
+    }
+
+    function parseImagesListEnvelopeUi(body, ctx) {
+      if (ctx === void 0) ctx = 'GET /images';
+      var d = requireBloomDataUi(body, ctx);
+      if (!Array.isArray(d.images)) {
+        throw new Error('Bloom API (' + ctx + '): data.images must be an array');
+      }
+      if (typeof d.hasMore !== 'boolean') {
+        throw new Error('Bloom API (' + ctx + '): data.hasMore must be a boolean');
+      }
+      var nc = d.nextCursor;
+      if (!(typeof nc === 'string' || nc === null)) {
+        throw new Error('Bloom API (' + ctx + '): data.nextCursor must be string or null');
+      }
+      var images = d.images.map(function (item, i) {
+        return parseImageListItemUi(item, ctx, i);
+      });
+      return { images: images, nextCursor: nc, hasMore: d.hasMore };
+    }
+
+    /** GET /images — validated list; UI rows use resolved imageUrl for display */
+    function parseImagesList(body) {
+      var page = parseImagesListEnvelopeUi(body);
+      return page.images.map(function (row) {
+        var st = row.status == null ? 'pending' : row.status;
+        var rawUrl = row.imageUrl;
+        var imageUrl =
+          rawUrl != null && rawUrl !== '' ? getImageUrl(String(rawUrl)) : undefined;
+        return { id: row.id, source: row.source, status: st, imageUrl: imageUrl };
       });
     }
 
@@ -617,20 +862,14 @@
     /**
      * Gets the credit balance for this API key.
      */
+    /** GET /credits — { data: { balance, unlimited } } */
     function getCredits(apiKey) {
       return bloomFetch('/credits', apiKey, { method: 'GET' }).then(function (raw) {
-        var data = unwrapData(raw);
-        var balance = data.balance != null ? data.balance : data.creditBalance != null ? data.creditBalance : data.credit_balance;
-        if (typeof balance === 'number' && isFinite(balance)) {
-          return balance;
-        }
-        if (typeof balance === 'string' && balance.trim() !== '' && isFinite(Number(balance))) {
-          return Number(balance);
-        }
-        if (data.unlimited === true) {
+        var credits = parseCreditsEnvelopeUi(raw);
+        if (credits.unlimited) {
           return Number.MAX_SAFE_INTEGER;
         }
-        throw new Error('Bloom API: credits response did not include a numeric balance');
+        return credits.balance;
       });
     }
 
