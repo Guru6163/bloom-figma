@@ -305,6 +305,39 @@ body {
   box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.2);
 }
 
+.brand-skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  pointer-events: none;
+}
+
+.brand-skeleton-card .skeleton-line {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+  max-width: 100%;
+}
+
+.brand-skeleton-card .skeleton-line--narrow {
+  height: 11px;
+  max-width: 55%;
+}
+
+#brand-onboard-status {
+  display: none;
+  margin-top: 4px;
+}
+
+#brand-onboard-status.is-visible {
+  display: block;
+}
+
 /* =============================================================================
    Aspect ratio pills
    ============================================================================= */

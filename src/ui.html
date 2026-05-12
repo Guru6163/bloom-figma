@@ -45,28 +45,27 @@
       <section id="brand-select" class="view" aria-labelledby="brand-title">
         <div>
           <h2 id="brand-title" class="view__title">Choose a brand</h2>
-          <p class="view__lead">Select which brand session to use for generation. Status updates when onboarding finishes.</p>
+          <p class="view__lead">Select which brand session to use for generation, or add a new brand from a website URL.</p>
         </div>
-        <div class="brand-list" role="list">
-          <button type="button" class="brand-card is-selected" role="listitem">
-            <span class="brand-card__name">Acme Co</span>
-            <span class="brand-card__url">https://acme.com</span>
-            <span class="brand-card__meta">Ready</span>
-          </button>
-          <button type="button" class="brand-card" role="listitem">
-            <span class="brand-card__name">Studio North</span>
-            <span class="brand-card__url">https://studionorth.example</span>
-            <span class="brand-card__meta">Analyzing</span>
-          </button>
-          <button type="button" class="brand-card" role="listitem">
-            <span class="brand-card__name">Bloom Marketing</span>
-            <span class="brand-card__url">https://instagram.com/bloom</span>
-            <span class="brand-card__meta">Logo required</span>
-          </button>
+        <p id="brand-list-error" class="field__error" role="alert" aria-live="polite"></p>
+        <p id="brand-onboard-status" class="hint">Learning your brand…</p>
+        <div id="brand-list" class="brand-list" role="list"></div>
+        <div class="field">
+          <label class="field__label" for="brand-url-input">Add brand from URL</label>
+          <input
+            id="brand-url-input"
+            class="input"
+            type="text"
+            name="brand_url"
+            autocomplete="off"
+            placeholder="https://example.com"
+            spellcheck="false"
+          />
         </div>
         <div class="stack">
-          <button type="button" class="btn-primary">Continue</button>
-          <button type="button" class="btn-secondary">Back</button>
+          <button id="btn-brand-add" type="button" class="btn-secondary">Add brand</button>
+          <button id="btn-brand-continue" type="button" class="btn-primary" disabled>Continue</button>
+          <button id="btn-brand-back" type="button" class="btn-secondary">Back</button>
         </div>
       </section>
 
@@ -222,12 +221,17 @@
       parent.postMessage({ pluginMessage: payload }, '*');
     }
 
+    /** Tracks the visible view id for message handlers (e.g. BRAND_LOADED). */
+    var currentViewId = 'setup';
+
     /**
      * showView(id)
      * Shows one view and hides all others.
      * Only one view is visible at a time.
+     * When switching to brand-select, loads brands from the Bloom API.
      */
     function showView(id) {
+      currentViewId = id;
       var views = document.querySelectorAll('#app-stage .view');
       for (var i = 0; i < views.length; i++) {
         var el = views[i];
@@ -236,6 +240,9 @@
         } else {
           el.style.display = 'none';
         }
+      }
+      if (id === 'brand-select') {
+        void loadBrands();
       }
     }
 
@@ -603,6 +610,285 @@
     /* -------------------------------------------------------------------------- */
 
     var savedBrandId = null;
+    /** Brand id selected in the brand-select list (not persisted until Continue). */
+    var selectedBrandId = null;
+    var _loadBrandsGen = 0;
+
+    function getApiKey() {
+      var input = document.getElementById('api-key-input');
+      return input ? String(input.value || '').trim() : '';
+    }
+
+    function setBrandListError(text) {
+      var el = document.getElementById('brand-list-error');
+      if (!el) return;
+      el.textContent = text || '';
+      if (text) el.classList.add('is-visible');
+      else el.classList.remove('is-visible');
+    }
+
+    function setOnboardStatusVisible(visible) {
+      var el = document.getElementById('brand-onboard-status');
+      if (!el) return;
+      if (visible) el.classList.add('is-visible');
+      else el.classList.remove('is-visible');
+    }
+
+    function formatBrandStatus(status) {
+      if (status === 'ready') return 'Ready';
+      if (status === 'analyzing') return 'Analyzing';
+      if (status === 'logo_required') return 'Logo required';
+      if (status === 'failed') return 'Failed';
+      return status != null && String(status) !== '' ? String(status) : '';
+    }
+
+    function renderBrandSkeletons(container, count) {
+      container.innerHTML = '';
+      for (var s = 0; s < count; s++) {
+        var wrap = document.createElement('div');
+        wrap.className = 'brand-skeleton-card';
+        wrap.setAttribute('role', 'presentation');
+        var a = document.createElement('span');
+        a.className = 'skeleton skeleton-line';
+        var b = document.createElement('span');
+        b.className = 'skeleton skeleton-line skeleton-line--narrow';
+        wrap.appendChild(a);
+        wrap.appendChild(b);
+        container.appendChild(wrap);
+      }
+    }
+
+    function setBrandContinueEnabled(enabled) {
+      var btn = document.getElementById('btn-brand-continue');
+      if (!btn) return;
+      btn.disabled = !enabled;
+    }
+
+    /**
+     * Updates selection highlight and Continue button from selectedBrandId.
+     */
+    function syncBrandSelectionUi() {
+      var list = document.getElementById('brand-list');
+      if (!list) return;
+      var cards = list.querySelectorAll('.brand-card');
+      for (var i = 0; i < cards.length; i++) {
+        var c = cards[i];
+        var bid = c.getAttribute('data-brand-id');
+        if (selectedBrandId && bid === selectedBrandId) {
+          c.classList.add('is-selected');
+          c.setAttribute('aria-pressed', 'true');
+        } else {
+          c.classList.remove('is-selected');
+          c.setAttribute('aria-pressed', 'false');
+        }
+      }
+      setBrandContinueEnabled(!!selectedBrandId);
+    }
+
+    function pickInitialSelection(brands) {
+      if (selectedBrandId && brands.some(function (b) { return b.id === selectedBrandId; })) {
+        return selectedBrandId;
+      }
+      if (savedBrandId && brands.some(function (b) { return b.id === savedBrandId; })) {
+        return savedBrandId;
+      }
+      return null;
+    }
+
+    /**
+     * loadBrands()
+     * Fetches brands from Bloom API and renders them as cards.
+     * Shows skeleton placeholders while loading.
+     * Each card shows brand name and URL.
+     * Clicking a card selects it and enables Continue button.
+     */
+    async function loadBrands() {
+      var gen = ++_loadBrandsGen;
+      var listEl = document.getElementById('brand-list');
+      if (!listEl) return;
+
+      var apiKey = getApiKey();
+      setBrandListError('');
+      if (!apiKey) {
+        listEl.innerHTML = '';
+        setBrandListError('No API key. Go back and connect your account.');
+        selectedBrandId = null;
+        setBrandContinueEnabled(false);
+        return;
+      }
+
+      renderBrandSkeletons(listEl, 4);
+
+      try {
+        var brands = await listBrands(apiKey);
+        if (gen !== _loadBrandsGen) return;
+
+        listEl.innerHTML = '';
+        if (brands.length === 0) {
+          var empty = document.createElement('p');
+          empty.className = 'hint';
+          empty.textContent = 'No brands yet. Add one using a website URL below.';
+          listEl.appendChild(empty);
+          selectedBrandId = null;
+          setBrandContinueEnabled(false);
+          return;
+        }
+
+        selectedBrandId = pickInitialSelection(brands);
+
+        for (var i = 0; i < brands.length; i++) {
+          (function (brand) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'brand-card';
+            btn.setAttribute('role', 'listitem');
+            btn.setAttribute('data-brand-id', brand.id);
+            btn.setAttribute('aria-pressed', selectedBrandId === brand.id ? 'true' : 'false');
+            if (selectedBrandId === brand.id) btn.classList.add('is-selected');
+
+            var nameEl = document.createElement('span');
+            nameEl.className = 'brand-card__name';
+            nameEl.textContent = brand.name || 'Untitled brand';
+
+            var urlEl = document.createElement('span');
+            urlEl.className = 'brand-card__url';
+            urlEl.textContent = brand.url || '—';
+
+            var meta = formatBrandStatus(brand.status);
+            if (meta) {
+              var metaEl = document.createElement('span');
+              metaEl.className = 'brand-card__meta';
+              metaEl.textContent = meta;
+              btn.appendChild(nameEl);
+              btn.appendChild(urlEl);
+              btn.appendChild(metaEl);
+            } else {
+              btn.appendChild(nameEl);
+              btn.appendChild(urlEl);
+            }
+
+            btn.addEventListener('click', function () {
+              selectedBrandId = brand.id;
+              syncBrandSelectionUi();
+            });
+
+            listEl.appendChild(btn);
+          })(brands[i]);
+        }
+
+        syncBrandSelectionUi();
+      } catch (err) {
+        if (gen !== _loadBrandsGen) return;
+        listEl.innerHTML = '';
+        var msg = err instanceof Error ? err.message : String(err);
+        setBrandListError(msg);
+        selectedBrandId = null;
+        setBrandContinueEnabled(false);
+      }
+    }
+
+    /**
+     * Add brand from URL
+     * 1. User enters a website URL
+     * 2. Calls onboardBrand() — returns immediately with 'analyzing' status
+     * 3. Polls getBrand() every 2 seconds until status is 'ready'
+     * 4. Shows "Learning your brand..." status while polling
+     * 5. On ready: refreshes brand list, auto-selects new brand
+     */
+    async function onAddBrandFromUrl() {
+      var urlInput = document.getElementById('brand-url-input');
+      var addBtn = document.getElementById('btn-brand-add');
+      var raw = urlInput ? String(urlInput.value || '').trim() : '';
+      if (!raw) {
+        showToast('Enter a website URL', true);
+        return;
+      }
+      var apiKey = getApiKey();
+      if (!apiKey) {
+        showToast('Connect your API key first', true);
+        return;
+      }
+
+      if (addBtn) addBtn.disabled = true;
+      setBrandListError('');
+      setOnboardStatusVisible(true);
+
+      try {
+        var created = await onboardBrand(apiKey, raw);
+        if (created.status === 'ready') {
+          setOnboardStatusVisible(false);
+          selectedBrandId = created.id;
+          await loadBrands();
+          if (urlInput) urlInput.value = '';
+          showToast('Brand added', false);
+          if (addBtn) addBtn.disabled = false;
+          return;
+        }
+
+        var brandId = created.id;
+        if (!brandId) {
+          throw new Error('Bloom API did not return a brand id');
+        }
+
+        var deadline = Date.now() + 600000;
+        var last = created;
+        while (Date.now() < deadline) {
+          await new Promise(function (r) {
+            setTimeout(r, 2000);
+          });
+          last = await getBrand(apiKey, brandId);
+          if (last.status === 'ready') break;
+          if (last.status === 'failed') {
+            throw new Error('Brand analysis failed');
+          }
+          if (last.status === 'logo_required') {
+            setOnboardStatusVisible(false);
+            selectedBrandId = last.id;
+            await loadBrands();
+            if (urlInput) urlInput.value = '';
+            showToast('Brand needs a logo in Bloom', true);
+            if (addBtn) addBtn.disabled = false;
+            return;
+          }
+        }
+
+        if (last.status !== 'ready') {
+          throw new Error('Timed out waiting for brand to be ready');
+        }
+
+        setOnboardStatusVisible(false);
+        selectedBrandId = last.id;
+        await loadBrands();
+        if (urlInput) urlInput.value = '';
+        showToast('Brand ready', false);
+      } catch (e) {
+        setOnboardStatusVisible(false);
+        var em = e instanceof Error ? e.message : String(e);
+        setBrandListError(em);
+        showToast(em, true);
+      } finally {
+        if (addBtn) addBtn.disabled = false;
+      }
+    }
+
+    /**
+     * Continue button
+     * Saves selected brandId via SAVE_BRAND message to code.ts
+     * Shows generator view
+     */
+    function onBrandContinueClick() {
+      if (!selectedBrandId) {
+        showToast('Select a brand first', true);
+        return;
+      }
+      savedBrandId = selectedBrandId;
+      postToCode({ type: 'SAVE_BRAND', brandId: selectedBrandId });
+      showView('generator');
+    }
+
+    function onBrandBackClick() {
+      showView('setup');
+    }
 
     function setApiKeyError(text) {
       var el = document.getElementById('api-key-error');
@@ -690,6 +976,19 @@
           break;
         case 'BRAND_LOADED':
           savedBrandId = msg.brandId != null ? String(msg.brandId) : null;
+          if (currentViewId === 'brand-select' && savedBrandId && !selectedBrandId) {
+            var listEl = document.getElementById('brand-list');
+            if (listEl) {
+              var cards = listEl.querySelectorAll('.brand-card');
+              for (var ci = 0; ci < cards.length; ci++) {
+                if (cards[ci].getAttribute('data-brand-id') === savedBrandId) {
+                  selectedBrandId = savedBrandId;
+                  syncBrandSelectionUi();
+                  break;
+                }
+              }
+            }
+          }
           break;
         default:
           break;
@@ -700,6 +999,15 @@
 
     var btnConnect = document.getElementById('btn-setup-connect');
     if (btnConnect) btnConnect.addEventListener('click', onConnectClick);
+
+    var btnBrandAdd = document.getElementById('btn-brand-add');
+    if (btnBrandAdd) btnBrandAdd.addEventListener('click', onAddBrandFromUrl);
+
+    var btnBrandContinue = document.getElementById('btn-brand-continue');
+    if (btnBrandContinue) btnBrandContinue.addEventListener('click', onBrandContinueClick);
+
+    var btnBrandBack = document.getElementById('btn-brand-back');
+    if (btnBrandBack) btnBrandBack.addEventListener('click', onBrandBackClick);
 
     /**
      * On plugin load:
