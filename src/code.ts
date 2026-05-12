@@ -1,9 +1,7 @@
 /**
- * code.ts
- *
- * Runs in Figma's plugin sandbox.
- * Uses figma.* API and fetch() (no DOM).
- * Communicates with ui.html exclusively via postMessage.
+ * @file Figma plugin main thread: `figma.*` document API, `figma.clientStorage`,
+ * and `fetch()` to manifest-allowed hosts for image bytes. No DOM. Messages the
+ * UI iframe (`ui.html`) only via `figma.ui.postMessage` / `onmessage`.
  */
 
 /** Discriminated union of all messages the UI may send to the plugin main thread. */
@@ -289,8 +287,8 @@ figma.on('selectionchange', () => {
 });
 
 /**
- * Routes `postMessage` payloads from `ui.html` to the appropriate Figma document operations.
- * Each handler runs inside its own try/catch so one failure does not break the plugin.
+ * Routes `postMessage` payloads from the UI to storage, selection, image, and lifecycle handlers.
+ * Each `switch` arm runs in its own try/catch so one failure does not break the plugin.
  */
 figma.ui.onmessage = async (raw: unknown) => {
   try {

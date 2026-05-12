@@ -1,7 +1,6 @@
 /**
- * bloom-client.ts
- *
- * Bloom REST API client for use inside the Figma plugin UI.
+ * @file Bloom REST API client for the typed reference implementation (not bundled into
+ * the default UI build; keep in sync with the inlined client in `ui.html`).
  * Success JSON is validated against OpenAPI 3.1.1 shapes in `bloom-api-schema.ts`.
  * https://www.trybloom.ai/api/v1/docs
  */
@@ -83,6 +82,10 @@ async function bloomFetchOkJson(path: string, apiKey: string, options: RequestIn
   }
 }
 
+/**
+ * Returns true when polling can stop for this image (`completed` or `failed`).
+ * @param s Effective generation status string.
+ */
 function isTerminalGenStatus(s: ReturnType<typeof effectiveImageGenStatus>): boolean {
   return s === 'completed' || s === 'failed';
 }

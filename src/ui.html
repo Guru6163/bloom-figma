@@ -1,4 +1,8 @@
 <!DOCTYPE html>
+<!--
+  Bloom Figma plugin — UI HTML template for HtmlWebpackPlugin.
+  Contains markup and inline script; global styles load via the webpack-inlined ui bundle (ui-styles.ts → ui.css → ui.js in head).
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -209,9 +213,8 @@
     'use strict';
 
     /**
-     * postToCode(payload)
-     * Sends a message to code.ts via postMessage.
-     * All communication with Figma must go through this.
+     * Sends a structured message to `code.ts` via the Figma UI `postMessage` bridge.
+     * @param {unknown} payload Message object with a `type` field.
      */
     function postToCode(payload) {
       parent.postMessage({ pluginMessage: payload }, '*');
@@ -285,6 +288,11 @@
     var BLOOM_BASE = 'https://www.trybloom.ai/api/v1';
     var BLOOM_ORIGIN = 'https://www.trybloom.ai';
 
+    /**
+     * Normalizes a Bloom image path or URL to an absolute https URL for `<img src>` and fetches.
+     * @param {unknown} raw URL string, path, or nullish from the API.
+     * @returns {string} Absolute URL or empty string if missing.
+     */
     function getImageUrl(raw) {
       if (raw == null || typeof raw !== 'string') return '';
       var u = raw.trim();
@@ -295,6 +303,11 @@
       return u;
     }
 
+    /**
+     * Extracts a human-readable error string from a Bloom error JSON body.
+     * @param {unknown} body Parsed JSON error body.
+     * @returns {string|undefined} Message text when present.
+     */
     function extractErrorMessage(body) {
       if (!body || typeof body !== 'object') return undefined;
       var o = body;
@@ -365,10 +378,20 @@
         });
     }
 
+    /**
+     * @param {unknown} v Wire value.
+     * @returns {boolean} True if `v` is a non-null, non-array object.
+     */
     function isRecord(v) {
       return v !== null && typeof v === 'object' && !Array.isArray(v);
     }
 
+    /**
+     * Requires a Bloom `{ data: object }` envelope and returns `data`.
+     * @param {unknown} body Parsed JSON root.
+     * @param {string} ctx Label for thrown errors.
+     * @returns {Record<string, unknown>} The `data` object.
+     */
     function requireBloomDataUi(body, ctx) {
       if (!isRecord(body) || !('data' in body)) {
         throw new Error('Bloom API (' + ctx + '): response must be a JSON object with a data property');
@@ -382,6 +405,12 @@
 
     var _BRAND_ST_UI = ['analyzing', 'ready', 'logo_required', 'failed'];
 
+    /**
+     * Parses one brand row from GET /brands `data.brands`.
+     * @param {unknown} raw Brand JSON object.
+     * @param {string} ctx Parser label.
+     * @param {number} index Index in `brands` array.
+     */
     function parseBrandListItemUi(raw, ctx, index) {
       if (!isRecord(raw)) {
         throw new Error('Bloom API (' + ctx + '): brands[' + index + '] must be an object');
@@ -410,6 +439,11 @@
       return out;
     }
 
+    /**
+     * Parses GET /brands list envelope (`brands`, `hasMore`, `nextCursor`).
+     * @param {unknown} body Parsed JSON root.
+     * @param {string} [ctx] Parser label.
+     */
     function parseBrandsListEnvelopeUi(body, ctx) {
       if (ctx === void 0) ctx = 'GET /brands';
       var d = requireBloomDataUi(body, ctx);
@@ -489,7 +523,11 @@
       return out;
     }
 
-    /** GET /credits — data envelope (OpenAPI) */
+    /**
+     * Parses GET /credits envelope (`balance`, `unlimited`).
+     * @param {unknown} body Parsed JSON root.
+     * @param {string} [ctx] Parser label.
+     */
     function parseCreditsEnvelopeUi(body, ctx) {
       if (ctx === void 0) ctx = 'GET /credits';
       var d = requireBloomDataUi(body, ctx);
@@ -508,12 +546,24 @@
       return { balance: balance, unlimited: false };
     }
 
+    /**
+     * Reads an optional string property from a record.
+     * @param {Record<string, unknown>} r Object.
+     * @param {string} key Property name.
+     * @returns {string|undefined} Trimmed string or undefined when absent/null.
+     */
     function optString(r, key) {
       var x = r[key];
       if (x === undefined || x === null) return undefined;
       return String(x);
     }
 
+    /**
+     * Reads an optional string array property, keeping only string elements.
+     * @param {Record<string, unknown>} r Object.
+     * @param {string} key Property name.
+     * @returns {string[]|undefined} Filtered array or undefined.
+     */
     function stringArrayField(r, key) {
       var v = r[key];
       if (!Array.isArray(v)) return undefined;
@@ -522,6 +572,11 @@
       });
     }
 
+    /**
+     * Maps a raw brand API row to the UI's normalized brand object (includes `brandSessionId`).
+     * @param {unknown} raw Brand detail or list item.
+     * @returns {object} Normalized brand fields for cards and session.
+     */
     function normalizeBrand(raw) {
       var r = isRecord(raw) ? raw : {};
       var id = String(r.id != null ? r.id : '');
@@ -549,6 +604,10 @@
     function listBrands(apiKey) {
       var out = [];
       var cursor = undefined;
+      /**
+       * Recursively fetches brand pages until `hasMore` is false.
+       * @returns {Promise<object[]>} Accumulated brands.
+       */
       function fetchPage() {
         var qs = new URLSearchParams();
         qs.set('limit', '100');
@@ -601,6 +660,11 @@
       });
     }
 
+    /**
+     * Parses POST /images/generations accepted envelope (`ids`, `variantGroupId`, `status`).
+     * @param {unknown} raw Parsed JSON root.
+     * @param {string} [ctx] Parser label.
+     */
     function parseGenerationAcceptedUi(raw, ctx) {
       if (ctx === void 0) ctx = 'POST /images/generations';
       var d = requireBloomDataUi(raw, ctx);
@@ -627,6 +691,11 @@
       return { ids: ids, variantGroupId: vgid, status: 'pending' };
     }
 
+    /**
+     * Parses POST /images/{id}/edit accepted envelope (`id`, `status`).
+     * @param {unknown} raw Parsed JSON root.
+     * @param {string} [ctx] Parser label.
+     */
     function parseEditAcceptedUi(raw, ctx) {
       if (ctx === void 0) ctx = 'POST /images/{id}/edit';
       var d = requireBloomDataUi(raw, ctx);
@@ -639,6 +708,15 @@
       return { id: d.id, status: 'pending' };
     }
 
+    /**
+     * POST /images/generations — returns new image id list.
+     * @param {string} apiKey Bloom API key.
+     * @param {string} brandSessionId Active brand session id.
+     * @param {string} prompt User prompt text.
+     * @param {string} aspectRatio Bloom aspect ratio token.
+     * @param {number} variantCount Desired variant count (clamped 1–5).
+     * @returns {Promise<string[]>} New image ids.
+     */
     function generateImages(apiKey, brandSessionId, prompt, aspectRatio, variantCount) {
       var clamped = Math.min(5, Math.max(1, Math.floor(variantCount)));
       return bloomFetch('/images/generations', apiKey, {
@@ -655,6 +733,14 @@
       });
     }
 
+    /**
+     * POST /images/{id}/edit — returns a single new pending image id.
+     * @param {string} apiKey Bloom API key.
+     * @param {string} brandSessionId Active brand session id.
+     * @param {string} imageId Source image id.
+     * @param {string} instruction Edit instruction text.
+     * @returns {Promise<string[]>} Singleton id array for polling parity with generate.
+     */
     function editImage(apiKey, brandSessionId, imageId, instruction) {
       return bloomFetch('/images/' + encodeURIComponent(imageId) + '/edit', apiKey, {
         method: 'POST',
@@ -688,6 +774,12 @@
     var _IMG_ST_UI = ['pending', 'generating', 'completed', 'failed'];
     var _ASP_UI = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
 
+    /**
+     * Parses a nullable string field on an image list row (strict).
+     * @param {unknown} v Raw value.
+     * @param {string} loc Location label for errors.
+     * @param {string} ctx Parser context.
+     */
     function _strOrNullUi(v, loc, ctx) {
       if (v === null) return null;
       if (typeof v !== 'string') {
@@ -696,6 +788,12 @@
       return v;
     }
 
+    /**
+     * Parses a nullable finite number on an image list row.
+     * @param {unknown} v Raw value.
+     * @param {string} loc Location label for errors.
+     * @param {string} ctx Parser context.
+     */
     function _numOrNullUi(v, loc, ctx) {
       if (v === null) return null;
       if (typeof v !== 'number' || !isFinite(v)) {
@@ -704,6 +802,12 @@
       return v;
     }
 
+    /**
+     * Parses a nullable supported aspect ratio on an image list row.
+     * @param {unknown} v Raw value.
+     * @param {string} loc Location label for errors.
+     * @param {string} ctx Parser context.
+     */
     function _aspOrNullUi(v, loc, ctx) {
       if (v === null) return null;
       if (typeof v !== 'string' || _ASP_UI.indexOf(v) === -1) {
@@ -712,6 +816,12 @@
       return v;
     }
 
+    /**
+     * Parses one `data.images[]` element from GET /images (OpenAPI required keys).
+     * @param {unknown} raw Row JSON.
+     * @param {string} ctx Parser label.
+     * @param {number} index Row index.
+     */
     function parseImageListItemUi(raw, ctx, index) {
       if (!isRecord(raw)) {
         throw new Error('Bloom API (' + ctx + '): images[' + index + '] must be an object');
@@ -779,6 +889,11 @@
       return row;
     }
 
+    /**
+     * Parses GET /images list envelope (`images`, `hasMore`, `nextCursor`).
+     * @param {unknown} body Parsed JSON root.
+     * @param {string} [ctx] Parser label.
+     */
     function parseImagesListEnvelopeUi(body, ctx) {
       if (ctx === void 0) ctx = 'GET /images';
       var d = requireBloomDataUi(body, ctx);
@@ -798,7 +913,11 @@
       return { images: images, nextCursor: nc, hasMore: d.hasMore };
     }
 
-    /** GET /images — validated list; UI rows use resolved imageUrl for display */
+    /**
+     * Maps strict list rows to lightweight objects used by polling (`status`, resolved `imageUrl`).
+     * @param {unknown} body Parsed GET /images JSON root.
+     * @returns {object[]} Simplified rows for progress UI.
+     */
     function parseImagesList(body) {
       var page = parseImagesListEnvelopeUi(body);
       return page.images.map(function (row) {
@@ -830,6 +949,11 @@
       });
     }
 
+    /**
+     * Maps a full image list row to a library grid item (insert prompt + ratio).
+     * @param {object} row Parsed list row from `parseImagesListEnvelopeUi`.
+     * @returns {{ id: string, imageUrl: string, aspectRatio: string, insertPrompt: string }} Library cell model.
+     */
     function mapListRowToLibraryItem(row) {
       var rawUrl = row.imageUrl;
       var imageUrl = rawUrl != null && rawUrl !== '' ? getImageUrl(String(rawUrl)) : '';
@@ -846,6 +970,11 @@
       };
     }
 
+    /**
+     * True when Bloom reports a finished image (`completed` or `failed`).
+     * @param {string} s Status string.
+     * @returns {boolean} Terminal flag.
+     */
     function isTerminalStatus(s) {
       return s === 'completed' || s === 'failed';
     }
@@ -864,6 +993,10 @@
       for (var j = 0; j < imageIds.length; j++) idSet[String(imageIds[j]).trim()] = true;
       var lastImages = [];
       onProgress(0);
+      /**
+       * Single long-poll GET /images with `wait`; recurses until all ids terminal or timeout.
+       * @returns {Promise<object[]>} Ordered simplified image rows for the UI.
+       */
       function pollOnce() {
         if (Date.now() >= deadline) {
           return Promise.reject(new Error('Bloom API: timed out after 120s waiting for images to complete'));
@@ -920,9 +1053,10 @@
     }
 
     /**
-     * Gets the credit balance for this API key.
+     * GET /credits — returns numeric balance, or `Number.MAX_SAFE_INTEGER` when unlimited.
+     * @param {string} apiKey Bloom API key.
+     * @returns {Promise<number>} Credit balance.
      */
-    /** GET /credits — { data: { balance, unlimited } } */
     function getCredits(apiKey) {
       return bloomFetch('/credits', apiKey, { method: 'GET' }).then(function (raw) {
         var credits = parseCreditsEnvelopeUi(raw);
@@ -942,11 +1076,19 @@
     var selectedBrandId = null;
     var _loadBrandsGen = 0;
 
+    /**
+     * Reads the API key field from the setup view.
+     * @returns {string} Trimmed key or empty string.
+     */
     function getApiKey() {
       var input = document.getElementById('api-key-input');
       return input ? String(input.value || '').trim() : '';
     }
 
+    /**
+     * Returns the persisted or in-session brand session id used for Bloom calls.
+     * @returns {string} Brand session id or empty string.
+     */
     function getBrandSessionId() {
       return savedBrandId || selectedBrandId || '';
     }
@@ -1023,6 +1165,10 @@
       return matches[0].id;
     }
 
+    /**
+     * Aspect ratio sent to Bloom: manual pill selection or auto from frame dimensions.
+     * @returns {string} Bloom aspect ratio token.
+     */
     function getEffectiveAspectRatio() {
       if (selectedRatio !== 'auto') return selectedRatio;
       if (frameWidth != null && frameHeight != null && frameWidth > 0 && frameHeight > 0) {
@@ -1145,6 +1291,9 @@
       }
     }
 
+    /**
+     * Syncs prompt character count, truncation at max length, and Generate button enabled state.
+     */
     function syncPromptUi() {
       var ta = document.getElementById('prompt-input');
       var countEl = document.getElementById('prompt-count');
@@ -1158,12 +1307,20 @@
       if (btn) btn.disabled = _generationRunning || raw.trim().length === 0;
     }
 
+    /**
+     * Builds the prompt string sent to Bloom, appending style-reference instructions when active.
+     * @param {string} baseText Raw textarea content.
+     * @returns {string} API prompt body.
+     */
     function buildApiPrompt(baseText) {
       var trimmed = (baseText || '').trim();
       if (styleReferenceDataUrl) return trimmed + STYLE_REF_SUFFIX;
       return trimmed;
     }
 
+    /**
+     * Shows or hides the style-reference preview and syncs dependent controls.
+     */
     function updateStyleRefUi() {
       var wrap = document.getElementById('style-ref-preview-wrap');
       var img = document.getElementById('style-ref-preview');
@@ -1182,13 +1339,24 @@
       syncPromptUi();
     }
 
+    /**
+     * Updates the generating overlay title text.
+     * @param {string} [title] Heading label; defaults to "Generating…".
+     */
     function setGeneratingTitle(title) {
       var t = document.getElementById('gen-loading-title');
       if (t) t.textContent = title || 'Generating…';
     }
 
+    /**
+     * Reserved for a determinate progress UI; currently a no-op (calls pass a percent for future use).
+     */
     function setGeneratingProgress() {}
 
+    /**
+     * Promise resolved when `code.ts` posts `BATCH_COMPLETE` (or rejected on `BATCH_ERROR`).
+     * @returns {Promise<void>} Completes after batch insert finishes.
+     */
     function waitForBatchComplete() {
       return new Promise(function (resolve, reject) {
         _batchWaitResolve = resolve;
@@ -1197,14 +1365,11 @@
     }
 
     /**
-     * runGeneration()
-     * The core generation flow:
-     * 1. Get effective aspect ratio (Auto → detect from frame)
-     * 2. Show generating view (spinner + title)
-     * 3. Call generateImages() with prompt, ratio, variants
-     * 4. Call pollImages() until images are complete
-     * 5. On success: store results, call showResults(), show results view
-     * 6. On error: show toast, return to generator view
+     * Core generate flow: Bloom API call, poll to completion, populate results, navigate views.
+     * @param {string} apiPrompt Full prompt including style-reference suffix when applicable.
+     * @param {string} insertPromptLabel Plain prompt used for Figma layer naming on insert.
+     * @param {string} effectiveRatio Bloom aspect ratio token.
+     * @param {number} vc Variant count.
      */
     async function runGenerationCore(apiPrompt, insertPromptLabel, effectiveRatio, vc) {
       var apiKey = getApiKey();
@@ -1249,6 +1414,9 @@
       }
     }
 
+    /**
+     * Reads the prompt field and starts a standard (non-batch) generation run.
+     */
     async function runGeneration() {
       var ta = document.getElementById('prompt-input');
       var base = ta ? String(ta.value || '').trim() : '';
@@ -1261,6 +1429,9 @@
       await runGenerationCore(apiPrompt, base, effectiveRatio, variantCount);
     }
 
+    /**
+     * Re-runs generation using the last successful ratio/variant snapshot and current style ref.
+     */
     function onRegenerateClick() {
       if (_generationRunning || !lastGenerateSnapshot) return;
       var snap = lastGenerateSnapshot;
@@ -1432,6 +1603,9 @@
       if (regenBtn) regenBtn.disabled = !lastGenerateSnapshot;
     }
 
+    /**
+     * Applies `selectedImageId` to results grid cells (selection chrome + aria).
+     */
     function syncResultsGridSelection() {
       var grid = document.getElementById('results-grid');
       if (!grid) return;
@@ -1445,6 +1619,9 @@
       }
     }
 
+    /**
+     * Applies `librarySelectedId` to library grid cells (selection chrome + aria).
+     */
     function syncLibraryGridSelection() {
       var grid = document.getElementById('library-grid');
       if (!grid) return;
@@ -1458,6 +1635,9 @@
       }
     }
 
+    /**
+     * Resets library state and loads the first page of completed generated images.
+     */
     async function openLibraryView() {
       var errEl = document.getElementById('library-error');
       if (errEl) {
@@ -1483,6 +1663,10 @@
       await loadLibraryNextPage(gen);
     }
 
+    /**
+     * Fetches the next library page when opening the view or clicking Load more.
+     * @param {number} [gen] Load generation token; stale loads are ignored.
+     */
     async function loadLibraryNextPage(gen) {
       if (gen === void 0) gen = _libraryLoadGen;
       if (gen !== _libraryLoadGen) return;
@@ -1542,6 +1726,9 @@
       }
     }
 
+    /**
+     * Renders `libraryRows` into the library grid with thumbnails and selection handlers.
+     */
     function renderLibraryGrid() {
       var grid = document.getElementById('library-grid');
       if (!grid) return;
@@ -1613,6 +1800,10 @@
       }
     }
 
+    /**
+     * Returns the currently selected library row, or the first row as a fallback.
+     * @returns {object|null} Library item or null.
+     */
     function getSelectedLibraryRow() {
       for (var li = 0; li < libraryRows.length; li++) {
         if (libraryRows[li].id === librarySelectedId) return libraryRows[li];
@@ -1620,6 +1811,9 @@
       return libraryRows.length > 0 ? libraryRows[0] : null;
     }
 
+    /**
+     * Inserts or replaces on canvas using the selected library image URL.
+     */
     function onLibraryInsertClick() {
       if (isBatchMode && batchFrames.length > 0) {
         showToast('Library insert works with a single frame. Deselect extra frames or use Generate for batch.', true);
@@ -1640,11 +1834,18 @@
       }
     }
 
+    /**
+     * Closes zoom overlay and returns from the library view to the generator.
+     */
     function onLibraryBackClick() {
       closeZoom();
       showView('generator');
     }
 
+    /**
+     * Finds the selected generation result object from `generationResults`.
+     * @returns {object|null} Result row or null.
+     */
     function getSelectedResult() {
       for (var i = 0; i < generationResults.length; i++) {
         if (generationResults[i].id === selectedImageId) return generationResults[i];
@@ -1652,21 +1853,37 @@
       return generationResults.length > 0 ? generationResults[0] : null;
     }
 
+    /**
+     * URL string for the currently selected generation thumbnail.
+     * @returns {string} URL or empty string.
+     */
     function getSelectedImageUrl() {
       var r = getSelectedResult();
       return r && r.imageUrl ? r.imageUrl : '';
     }
 
+    /**
+     * Aspect ratio label for the selected generation result (insert metadata).
+     * @returns {string} Ratio token.
+     */
     function getSelectedResultAspectRatio() {
       var r = getSelectedResult();
       return r && r.aspectRatio ? r.aspectRatio : '1:1';
     }
 
+    /**
+     * @returns {boolean} True when the image zoom overlay is visible.
+     */
     function isZoomOverlayOpen() {
       var ov = document.getElementById('zoom-overlay');
       return !!(ov && ov.classList.contains('is-open'));
     }
 
+    /**
+     * Opens the full-screen zoom viewer for results or library at a given index.
+     * @param {'results'|'library'} context Which row array to read from.
+     * @param {number} index Row index to display.
+     */
     function openZoom(context, index) {
       var rows = context === 'library' ? libraryRows : generationResults;
       if (!rows.length) return;
@@ -1685,6 +1902,9 @@
       updateZoomNavState();
     }
 
+    /**
+     * Hides the zoom overlay and restores aria visibility.
+     */
     function closeZoom() {
       var ov = document.getElementById('zoom-overlay');
       if (ov) {
@@ -1693,6 +1913,9 @@
       }
     }
 
+    /**
+     * Enables or disables prev/next zoom controls when only one image exists.
+     */
     function updateZoomNavState() {
       var rows = zoomContext === 'library' ? libraryRows : generationResults;
       var n = rows.length;
@@ -1702,6 +1925,10 @@
       if (next) next.disabled = n <= 1;
     }
 
+    /**
+     * Temporarily changes insert button labels after a successful canvas operation.
+     * @param {string} label Short confirmation text.
+     */
     function flashInsertButton(label) {
       if (_insertFlashTimer) clearTimeout(_insertFlashTimer);
       var pairs = [];
@@ -1720,6 +1947,9 @@
       }, 1800);
     }
 
+    /**
+     * Primary Generate / batch handler from the generator view.
+     */
     function onGenerateClick() {
       if (_generationRunning) return;
       if (isBatchMode) {
@@ -1729,6 +1959,9 @@
       }
     }
 
+    /**
+     * Inserts or replaces the selected generation result on the Figma canvas.
+     */
     function onInsertSelectedClick() {
       var url = getSelectedImageUrl();
       if (!url) {
@@ -1746,11 +1979,18 @@
       }
     }
 
+    /**
+     * Returns from results/zoom to the generator view for a new prompt.
+     */
     function onNewGenerationClick() {
       closeZoom();
       showView('generator');
     }
 
+    /**
+     * Global key handler (e.g. Escape closes zoom).
+     * @param {KeyboardEvent} ev Browser keydown event.
+     */
     function onDocumentKeydown(ev) {
       if (ev.key === 'Escape' && isZoomOverlayOpen()) {
         ev.preventDefault();
@@ -1779,6 +2019,10 @@
       return null;
     }
 
+    /**
+     * Marks a thumbnail cell as failed after `IMAGE_DATA_ERROR` from the main thread.
+     * @param {string|number} imageId Bloom image id.
+     */
     function markImageCellUnavailable(imageId) {
       var cell = findResultCellByImageId(imageId);
       if (!cell) return;
@@ -1794,6 +2038,9 @@
       ph.textContent = 'Image unavailable';
     }
 
+    /**
+     * Toggles visibility of the inline edit instruction panel on the results view.
+     */
     function onEditToggleClick() {
       var panel = document.getElementById('edit-panel');
       var btn = document.getElementById('btn-edit-toggle');
@@ -1803,15 +2050,24 @@
       btn.setAttribute('aria-expanded', visible ? 'true' : 'false');
     }
 
+    /**
+     * Requests a data URL for the currently selected canvas image layer (style reference).
+     */
     function onStyleRefCaptureClick() {
       postToCode({ type: 'GET_SELECTED_IMAGE_URL' });
     }
 
+    /**
+     * Clears the captured style reference and preview.
+     */
     function onStyleRefClearClick() {
       styleReferenceDataUrl = null;
       updateStyleRefUi();
     }
 
+    /**
+     * Runs Bloom image edit for the selected result and replaces it in the grid when complete.
+     */
     async function onApplyEditClick() {
       if (_editRunning || _generationRunning) return;
       var sel = getSelectedResult();
@@ -1869,6 +2125,10 @@
       }
     }
 
+    /**
+     * Shows inline error text on the brand picker view.
+     * @param {string} text Error message or empty to clear.
+     */
     function setBrandListError(text) {
       var el = document.getElementById('brand-list-error');
       if (!el) return;
@@ -1877,6 +2137,10 @@
       else el.classList.remove('is-visible');
     }
 
+    /**
+     * Shows or hides the "Learning your brand…" status line during onboarding poll.
+     * @param {boolean} visible Whether the status element should be visible.
+     */
     function setOnboardStatusVisible(visible) {
       var el = document.getElementById('brand-onboard-status');
       if (!el) return;
@@ -1884,6 +2148,11 @@
       else el.classList.remove('is-visible');
     }
 
+    /**
+     * Human-readable label for a brand API status enum.
+     * @param {string} status Raw status from the API.
+     * @returns {string} Short UI label.
+     */
     function formatBrandStatus(status) {
       if (status === 'ready') return 'Ready';
       if (status === 'analyzing') return 'Analyzing';
@@ -1892,6 +2161,11 @@
       return status != null && String(status) !== '' ? String(status) : '';
     }
 
+    /**
+     * Renders placeholder skeleton cards while the brand list is loading.
+     * @param {HTMLElement} container Brand list host element.
+     * @param {number} count Number of skeleton cards.
+     */
     function renderBrandSkeletons(container, count) {
       container.innerHTML = '';
       for (var s = 0; s < count; s++) {
@@ -1908,6 +2182,10 @@
       }
     }
 
+    /**
+     * Enables or disables the brand Continue button.
+     * @param {boolean} enabled Whether a brand is selected.
+     */
     function setBrandContinueEnabled(enabled) {
       var btn = document.getElementById('btn-brand-continue');
       if (!btn) return;
@@ -1935,6 +2213,11 @@
       setBrandContinueEnabled(!!selectedBrandId);
     }
 
+    /**
+     * Chooses which brand id should be selected when the list loads.
+     * @param {{ id: string }[]} brands Loaded brand rows.
+     * @returns {string|null} Selected id or null.
+     */
     function pickInitialSelection(brands) {
       if (selectedBrandId && brands.some(function (b) { return b.id === selectedBrandId; })) {
         return selectedBrandId;
@@ -2136,10 +2419,17 @@
       showView('generator');
     }
 
+    /**
+     * Returns from brand selection to the API key setup view.
+     */
     function onBrandBackClick() {
       showView('setup');
     }
 
+    /**
+     * Shows inline validation errors under the API key field on the setup view.
+     * @param {string} text Message or empty to clear.
+     */
     function setApiKeyError(text) {
       var el = document.getElementById('api-key-error');
       if (!el) return;
@@ -2148,6 +2438,10 @@
       else el.classList.remove('is-visible');
     }
 
+    /**
+     * Disables the Connect button and swaps its label while the key is being verified.
+     * @param {boolean} isLoading True during async validation.
+     */
     function setConnectLoading(isLoading) {
       var btn = document.getElementById('btn-setup-connect');
       if (!btn) return;
@@ -2156,10 +2450,10 @@
     }
 
     /**
-     * Connect button click handler
+     * Connect button: validates the key via the inlined Bloom client, then persists through `code.ts`.
      * 1. Reads API key from input
-     * 2. Calls validateApiKey() from bloom-client.ts
-     * 3. If valid: saves key via SAVE_KEY message, shows brand-select
+     * 2. Calls `validateApiKey()`
+     * 3. If valid: `SAVE_KEY` and show brand-select
      * 4. If invalid: shows error message under input
      */
     function onConnectClick() {

@@ -1,3 +1,8 @@
+/**
+ * @file Webpack build for the Bloom Figma plugin: compiles `code.ts` and the UI
+ * bundle (`ui-styles.ts` + `ui.css`), emits `dist/code.js` and `dist/ui.html` with
+ * UI script inlined for the Figma iframe.
+ */
 const path = require('path')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const HtmlInlineScriptPlugin = require('html-inline-script-webpack-plugin')

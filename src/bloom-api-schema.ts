@@ -1,5 +1,5 @@
 /**
- * Bloom HTTP API (OpenAPI 3.1.1) — success envelopes and strict parsers.
+ * @file Bloom HTTP API (OpenAPI 3.1.1) — success envelopes and strict parsers.
  * https://www.trybloom.ai/api/v1/docs
  *
  * Image shapes:
@@ -10,7 +10,15 @@
  * never rely on `unknown` + blind casts.
  */
 
+/**
+ * Thrown when a Bloom 2xx JSON body does not match the expected envelope or field types.
+ */
 export class BloomApiParseError extends Error {
+  /**
+   * @param context Parser or endpoint label included in the error message.
+   * @param message Human-readable validation failure.
+   * @param received Optional raw value for debugging.
+   */
   constructor(
     readonly context: string,
     message: string,
@@ -21,6 +29,10 @@ export class BloomApiParseError extends Error {
   }
 }
 
+/**
+ * Narrows `unknown` to a plain object record (not null, not array).
+ * @param v Wire JSON value.
+ */
 export function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -31,6 +43,11 @@ export interface BloomSuccessEnvelope<T> {
   data: T;
 }
 
+/**
+ * Requires a `{ data: object }` Bloom envelope and returns the inner `data` object.
+ * @param body Parsed JSON root.
+ * @param ctx Parser label for error messages.
+ */
 function requireEnvelope(body: unknown, ctx: string): Record<string, unknown> {
   if (!isRecord(body) || !('data' in body)) {
     throw new BloomApiParseError(ctx, 'response must be a JSON object with a data property', body);
@@ -50,6 +67,10 @@ export interface BloomHttpErrorBody {
   error?: string | { message?: string; code?: string };
 }
 
+/**
+ * Best-effort extraction of a human-readable message from a Bloom error JSON body.
+ * @param body Parsed error JSON or text.
+ */
 export function extractBloomErrorMessage(body: unknown): string | undefined {
   if (!isRecord(body)) return undefined;
   const o = body as BloomHttpErrorBody;
@@ -66,6 +87,11 @@ export function extractBloomErrorMessage(body: unknown): string | undefined {
 export const BLOOM_BRAND_STATUSES = ['analyzing', 'ready', 'logo_required', 'failed'] as const;
 export type BloomBrandStatus = (typeof BLOOM_BRAND_STATUSES)[number];
 
+/**
+ * Asserts that `v` is one of the known brand lifecycle status strings.
+ * @param v Raw status field.
+ * @param ctx Parser label for errors.
+ */
 function assertBrandStatus(v: unknown, ctx: string): asserts v is BloomBrandStatus {
   if (typeof v !== 'string' || !(BLOOM_BRAND_STATUSES as readonly string[]).includes(v)) {
     throw new BloomApiParseError(ctx, `invalid brand status: ${String(v)}`, v);
@@ -103,6 +129,12 @@ export interface BloomBrandsListData {
   hasMore: boolean;
 }
 
+/**
+ * Parses one element of `data.brands` from GET /brands.
+ * @param raw Brand list item JSON.
+ * @param ctx Parser label.
+ * @param index Array index for error messages.
+ */
 function parseBrandListItem(raw: unknown, ctx: string, index: number): BloomBrandListItem {
   if (!isRecord(raw)) {
     throw new BloomApiParseError(ctx, `brands[${index}] must be an object`, raw);
@@ -189,6 +221,7 @@ export interface BloomOnboardBrandData {
   logoError?: string | null;
 }
 
+/** Validates POST /brands onboard response `data` (`id`, `status`, optional `logoError`). */
 export function parseOnboardBrandEnvelope(body: unknown, ctx = 'POST /brands'): BloomOnboardBrandData {
   const d = requireEnvelope(body, ctx);
   const id = d.id;
@@ -269,6 +302,13 @@ const GET_IMAGE_REQUIRED_KEYS = [
   'createdAt',
 ] as const;
 
+/**
+ * Ensures a required key exists on an image row object before field-by-field parsing.
+ * @param r Image object record.
+ * @param key Required property name.
+ * @param ctx Parser label.
+ * @param index Image index in list, or null for GET-by-id `data`.
+ */
 function requireImageKey(
   r: Record<string, unknown>,
   key: string,
@@ -281,6 +321,13 @@ function requireImageKey(
   }
 }
 
+/**
+ * Parses a nullable string field on an image row.
+ * @param v Raw field value.
+ * @param field Field name for errors.
+ * @param ctx Parser label.
+ * @param index Image index or null for single-image `data`.
+ */
 function parseStringOrNull(v: unknown, field: string, ctx: string, index: number | null): string | null {
   if (v === null) return null;
   if (typeof v !== 'string') {
@@ -290,6 +337,13 @@ function parseStringOrNull(v: unknown, field: string, ctx: string, index: number
   return v;
 }
 
+/**
+ * Parses a nullable finite number field on an image row.
+ * @param v Raw field value.
+ * @param field Field name for errors.
+ * @param ctx Parser label.
+ * @param index Image index or null.
+ */
 function parseNumberOrNull(v: unknown, field: string, ctx: string, index: number | null): number | null {
   if (v === null) return null;
   if (typeof v !== 'number' || !Number.isFinite(v)) {
@@ -299,6 +353,12 @@ function parseNumberOrNull(v: unknown, field: string, ctx: string, index: number
   return v;
 }
 
+/**
+ * Parses a nullable supported aspect ratio string.
+ * @param v Raw aspect ratio field.
+ * @param ctx Parser label.
+ * @param index Image index or null.
+ */
 function parseAspectRatioOrNull(v: unknown, ctx: string, index: number | null): string | null {
   if (v === null) return null;
   if (typeof v !== 'string' || !ASPECT_RATIOS.includes(v)) {
@@ -308,6 +368,12 @@ function parseAspectRatioOrNull(v: unknown, ctx: string, index: number | null): 
   return v;
 }
 
+/**
+ * Parses required image `source` enum.
+ * @param v Raw source field.
+ * @param ctx Parser label.
+ * @param index Image index or null.
+ */
 function parseSourceRequired(v: unknown, ctx: string, index: number | null): BloomImageSource {
   if (typeof v !== 'string' || !IMAGE_SOURCES.includes(v)) {
     const loc = index === null ? 'data.source' : `images[${index}].source`;
@@ -316,6 +382,12 @@ function parseSourceRequired(v: unknown, ctx: string, index: number | null): Blo
   return v as BloomImageSource;
 }
 
+/**
+ * Parses nullable image action type enum.
+ * @param v Raw actionType field.
+ * @param ctx Parser label.
+ * @param index Image index or null.
+ */
 function parseActionTypeOrNull(v: unknown, ctx: string, index: number | null): BloomImageActionType | null {
   if (v === null) return null;
   if (typeof v !== 'string' || !IMAGE_ACTION_TYPES.includes(v)) {
@@ -325,6 +397,12 @@ function parseActionTypeOrNull(v: unknown, ctx: string, index: number | null): B
   return v as BloomImageActionType;
 }
 
+/**
+ * Parses nullable generation status enum.
+ * @param v Raw status field.
+ * @param ctx Parser label.
+ * @param index Image index or null.
+ */
 function parseGenStatusOrNull(v: unknown, ctx: string, index: number | null): BloomImageGenStatus | null {
   if (v === null) return null;
   if (typeof v !== 'string' || !GEN_STATUSES.includes(v)) {
@@ -334,6 +412,12 @@ function parseGenStatusOrNull(v: unknown, ctx: string, index: number | null): Bl
   return v as BloomImageGenStatus;
 }
 
+/**
+ * Parses nullable variant group id (uuid string or null).
+ * @param v Raw variantGroupId field.
+ * @param ctx Parser label.
+ * @param index Image index or null.
+ */
 function parseVariantGroupIdOrNull(v: unknown, ctx: string, index: number | null): string | null {
   if (v === null) return null;
   if (typeof v !== 'string') {
@@ -392,6 +476,12 @@ export interface BloomImagesListData {
   hasMore: boolean;
 }
 
+/**
+ * Parses one element of `data.images` from GET /images.
+ * @param raw Image row JSON.
+ * @param ctx Parser label.
+ * @param index Row index for errors.
+ */
 function parseImageListItem(raw: unknown, ctx: string, index: number): BloomImageListItem {
   if (!isRecord(raw)) {
     throw new BloomApiParseError(ctx, `images[${index}] must be an object`, raw);
@@ -452,6 +542,7 @@ function parseImageListItem(raw: unknown, ctx: string, index: number): BloomImag
   return row;
 }
 
+/** Validates GET /images/{id} `data` per OpenAPI required keys. */
 export function parseGetImageEnvelope(body: unknown, ctx = 'GET /images/{id}'): BloomImageGetData {
   const d = requireEnvelope(body, ctx);
   for (const k of GET_IMAGE_REQUIRED_KEYS) {
@@ -485,12 +576,17 @@ export function parseGetImageEnvelope(body: unknown, ctx = 'GET /images/{id}'): 
   };
 }
 
+/**
+ * Treats missing/null image status as pending for polling logic.
+ * @param row Parsed image row from list or get-by-id.
+ */
 export function effectiveImageGenStatus(row: BloomImageListItem | BloomImageGetData): BloomImageGenStatus {
   const s = row.status;
   if (s === null || s === undefined) return 'pending';
   return s;
 }
 
+/** Validates GET /images list `data` (`images`, pagination, required image fields). */
 export function parseImagesListEnvelope(body: unknown, ctx = 'GET /images'): BloomImagesListData {
   const d = requireEnvelope(body, ctx);
   if (!Array.isArray(d.images)) {
@@ -515,6 +611,7 @@ export interface BloomGenerationAcceptedData {
   status: 'pending';
 }
 
+/** Validates POST /images/generations accepted response (`ids`, `variantGroupId`, `status`). */
 export function parseGenerationAcceptedEnvelope(body: unknown, ctx = 'POST /images/generations'): BloomGenerationAcceptedData {
   const d = requireEnvelope(body, ctx);
   const idsRaw = d.ids;
@@ -545,6 +642,7 @@ export interface BloomEditAcceptedData {
   status: 'pending';
 }
 
+/** Validates POST /images/{id}/edit accepted response (`id`, `status`). */
 export function parseEditAcceptedEnvelope(body: unknown, ctx = 'POST /images/{id}/edit'): BloomEditAcceptedData {
   const d = requireEnvelope(body, ctx);
   const id = d.id;
@@ -564,6 +662,7 @@ export interface BloomCreditsData {
   unlimited: boolean;
 }
 
+/** Validates GET /credits `data` (`balance`, `unlimited`). */
 export function parseCreditsEnvelope(body: unknown, ctx = 'GET /credits'): BloomCreditsData {
   const d = requireEnvelope(body, ctx);
   if (typeof d.unlimited !== 'boolean') {
@@ -586,6 +685,10 @@ export interface BloomBrand extends BloomBrandDetailData {
   brandSessionId: string;
 }
 
+/**
+ * Adds `brandSessionId` alias equal to brand `id` for plugin code paths.
+ * @param row Parsed brand list or detail row.
+ */
 export function toBloomBrand(row: BloomBrandListItem | BloomBrandDetailData): BloomBrand {
   return { ...row, brandSessionId: row.id };
 }

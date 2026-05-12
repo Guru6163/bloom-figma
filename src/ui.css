@@ -1,5 +1,6 @@
 /**
- * Bloom plugin UI — bundled into dist/ui.html via ui-styles.ts (Figma cannot load sibling CSS via <link>).
+ * @file Bloom plugin UI styles: loaded through `ui-styles.ts` so webpack inlines
+ * rules into the UI bundle (Figma plugin iframes do not reliably load sibling `<link>` CSS).
  */
 
 /* =============================================================================
