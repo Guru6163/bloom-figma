@@ -7,7 +7,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="ui.css" />
 </head>
 <body>
   <div class="app">
@@ -34,10 +33,11 @@
             placeholder="sk_live_…"
             spellcheck="false"
           />
+          <p id="api-key-error" class="field__error" role="alert" aria-live="polite"></p>
         </div>
         <p class="hint">You can create and manage keys in your Bloom workspace.</p>
         <div class="stack">
-          <button type="button" class="btn-primary">Save &amp; continue</button>
+          <button id="btn-setup-connect" type="button" class="btn-primary">Connect</button>
         </div>
       </section>
 
@@ -209,5 +209,506 @@
       />
     </figure>
   </div>
+
+  <script>
+    'use strict';
+
+    /**
+     * postToCode(payload)
+     * Sends a message to code.ts via postMessage.
+     * All communication with Figma must go through this.
+     */
+    function postToCode(payload) {
+      parent.postMessage({ pluginMessage: payload }, '*');
+    }
+
+    /**
+     * showView(id)
+     * Shows one view and hides all others.
+     * Only one view is visible at a time.
+     */
+    function showView(id) {
+      var views = document.querySelectorAll('#app-stage .view');
+      for (var i = 0; i < views.length; i++) {
+        var el = views[i];
+        if (el.id === id) {
+          el.style.display = 'flex';
+        } else {
+          el.style.display = 'none';
+        }
+      }
+    }
+
+    var _toastTimer = null;
+
+    /**
+     * showToast(message, isError)
+     * Shows a temporary notification at the bottom.
+     * Auto-hides after 3 seconds.
+     */
+    function showToast(message, isError) {
+      if (isError === void 0) isError = false;
+      var toast = document.getElementById('toast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.classList.remove('toast--error', 'toast--success');
+      toast.classList.add(isError ? 'toast--error' : 'toast--success');
+      toast.classList.add('is-visible');
+      if (_toastTimer) clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(function () {
+        toast.classList.remove('is-visible', 'toast--error', 'toast--success');
+        toast.textContent = '';
+        _toastTimer = null;
+      }, 3000);
+    }
+
+    /* -------------------------------------------------------------------------- */
+    /* Bloom REST client (inlined from bloom-client.ts — Figma UI cannot import modules) */
+    /* -------------------------------------------------------------------------- */
+
+    var BLOOM_BASE = 'https://www.trybloom.ai/api/v1';
+
+    function extractErrorMessage(body) {
+      if (!body || typeof body !== 'object') return undefined;
+      var o = body;
+      var err = o.error != null ? o.error : o.message != null ? o.message : o.detail;
+      if (typeof err === 'string') return err;
+      if (err && typeof err === 'object' && typeof err.message === 'string') return err.message;
+      return undefined;
+    }
+
+    /**
+     * Makes an authenticated request to the Bloom API.
+     * Throws a descriptive error if the response is not ok.
+     */
+    function bloomFetch(path, apiKey, options) {
+      if (options === void 0) options = {};
+      var normalizedPath = path.indexOf('/') === 0 ? path : '/' + path;
+      var url = BLOOM_BASE + normalizedPath;
+      var headers = new Headers(options.headers || undefined);
+      headers.set('x-api-key', apiKey);
+      if (options.body !== undefined && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+      }
+      return fetch(url, Object.assign({}, options, { headers: headers }))
+        .catch(function (e) {
+          var msg = e instanceof Error ? e.message : String(e);
+          throw new Error('Bloom API request failed: ' + msg);
+        })
+        .then(function (res) {
+          return res.text().then(function (text) {
+            var body = null;
+            if (text) {
+              try {
+                body = JSON.parse(text);
+              } catch (_e) {
+                body = text;
+              }
+            }
+            if (!res.ok) {
+              var extracted = extractErrorMessage(body);
+              var detail =
+                extracted != null ? extracted : typeof body === 'string' ? body : res.statusText;
+              throw new Error('Bloom API ' + res.status + ' ' + res.statusText + (detail ? ': ' + detail : ''));
+            }
+            return body;
+          });
+        });
+    }
+
+    /**
+     * Validates an API key by attempting to list brands.
+     * Returns true if the key is valid, false otherwise.
+     */
+    function validateApiKey(apiKey) {
+      return bloomFetch('/brands?limit=1', apiKey, { method: 'GET' })
+        .then(function () {
+          return true;
+        })
+        .catch(function () {
+          return false;
+        });
+    }
+
+    function unwrapData(body) {
+      if (body && typeof body === 'object' && 'data' in body) {
+        return body.data;
+      }
+      return body;
+    }
+
+    function normalizeBrand(raw) {
+      var id = String(raw.id != null ? raw.id : '');
+      var name = String(raw.name != null ? raw.name : '');
+      var url = String(raw.url != null ? raw.url : raw.brand_url != null ? raw.brand_url : raw.brandUrl != null ? raw.brandUrl : '');
+      var status = raw.status;
+      var brandSessionId =
+        raw.brandSessionId !== undefined
+          ? String(raw.brandSessionId)
+          : raw.brand_session_id !== undefined
+            ? String(raw.brand_session_id)
+            : undefined;
+      return {
+        id: id,
+        name: name,
+        url: url,
+        status: status,
+        brandSessionId: brandSessionId || undefined,
+      };
+    }
+
+    function extractBrandsPayload(body) {
+      if (!body || typeof body !== 'object') {
+        return { brands: [] };
+      }
+      var root = body;
+      if (Array.isArray(root.brands)) {
+        return {
+          brands: root.brands,
+          nextCursor: root.next_cursor != null ? root.next_cursor : root.nextCursor,
+        };
+      }
+      var data = root.data;
+      if (data && typeof data === 'object' && Array.isArray(data.brands)) {
+        return {
+          brands: data.brands,
+          nextCursor: data.next_cursor != null ? data.next_cursor : data.nextCursor,
+        };
+      }
+      return { brands: [] };
+    }
+
+    /**
+     * Returns all brands for this API key.
+     * Handles multiple possible response shapes from the API.
+     */
+    function listBrands(apiKey) {
+      var out = [];
+      var cursor = undefined;
+      function fetchPage() {
+        var qs = new URLSearchParams();
+        qs.set('limit', '100');
+        if (cursor) qs.set('cursor', cursor);
+        return bloomFetch('/brands?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
+          var parsed = extractBrandsPayload(raw);
+          var brands = parsed.brands;
+          var nextCursor = parsed.nextCursor;
+          for (var i = 0; i < brands.length; i++) {
+            var item = brands[i];
+            if (item && typeof item === 'object') {
+              out.push(normalizeBrand(item));
+            }
+          }
+          var next = nextCursor != null ? nextCursor : undefined;
+          if (!next || brands.length === 0) {
+            return out;
+          }
+          cursor = next;
+          return fetchPage();
+        });
+      }
+      return fetchPage();
+    }
+
+    /**
+     * Starts onboarding a new brand from a website URL.
+     * Returns immediately — brand will be in 'analyzing' status.
+     * Poll getBrand() until status is 'ready'.
+     */
+    function onboardBrand(apiKey, url) {
+      return bloomFetch('/brands', apiKey, {
+        method: 'POST',
+        body: JSON.stringify({ url: url }),
+      }).then(function (raw) {
+        var data = unwrapData(raw);
+        var id = String(data.id != null ? data.id : '');
+        var status = data.status;
+        return {
+          id: id,
+          name: '',
+          url: url,
+          status: status,
+          brandSessionId: id,
+        };
+      });
+    }
+
+    /**
+     * Gets a single brand by ID.
+     * Use this to poll for onboarding completion.
+     */
+    function getBrand(apiKey, brandId) {
+      return bloomFetch('/brands/' + encodeURIComponent(brandId), apiKey, { method: 'GET' }).then(function (raw) {
+        var data = unwrapData(raw);
+        return normalizeBrand(data);
+      });
+    }
+
+    function parseGenerationImageIds(body) {
+      var data = unwrapData(body);
+      var ids =
+        data.imageIds != null
+          ? data.imageIds
+          : data.image_ids != null
+            ? data.image_ids
+            : Array.isArray(data.images)
+              ? data.images.map(function (x) {
+                  return x.id;
+                })
+              : undefined;
+      if (Array.isArray(ids)) {
+        return ids.filter(function (x) {
+          return typeof x === 'string';
+        });
+      }
+      return [];
+    }
+
+    /**
+     * Starts generating images using the Bloom API.
+     * Returns image IDs immediately — images generate asynchronously.
+     * Poll pollImages() until all images are complete.
+     */
+    function generateImages(apiKey, brandSessionId, prompt, aspectRatio, variantCount) {
+      var clamped = Math.min(4, Math.max(1, Math.floor(variantCount)));
+      return bloomFetch('/images/generations', apiKey, {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: prompt,
+          brandSessionId: brandSessionId,
+          aspectRatio: aspectRatio,
+          variantCount: clamped,
+        }),
+      }).then(function (raw) {
+        var ids = parseGenerationImageIds(raw);
+        if (ids.length === 0) {
+          throw new Error('Bloom API: image generation returned no image IDs');
+        }
+        return ids;
+      });
+    }
+
+    function parseImagesList(body) {
+      var root = body && typeof body === 'object' ? body : {};
+      var images = [];
+      if (Array.isArray(root.images)) {
+        images = root.images;
+      } else if (root.data && typeof root.data === 'object' && Array.isArray(root.data.images)) {
+        images = root.data.images;
+      }
+      return images.map(function (item) {
+        var o = item && typeof item === 'object' ? item : {};
+        var id = String(o.id != null ? o.id : '');
+        var status = o.status != null ? o.status : 'pending';
+        var imageUrl =
+          o.imageUrl !== undefined || o.image_url !== undefined
+            ? String(o.imageUrl != null ? o.imageUrl : o.image_url)
+            : undefined;
+        return { id: id, status: status, imageUrl: imageUrl };
+      });
+    }
+
+    function isTerminalStatus(s) {
+      return s === 'completed' || s === 'failed';
+    }
+
+    /**
+     * Polls the Bloom API until all images are complete.
+     * Uses the batch polling endpoint: GET /images?ids=...&wait=true
+     * Calls onProgress with 0-100 as images complete.
+     * Throws if images fail or timeout after 120 seconds.
+     */
+    function pollImages(apiKey, imageIds, onProgress) {
+      if (imageIds.length === 0) {
+        onProgress(100);
+        return Promise.resolve([]);
+      }
+      var deadline = Date.now() + 120000;
+      var idSet = {};
+      for (var j = 0; j < imageIds.length; j++) idSet[imageIds[j]] = true;
+      var lastImages = [];
+      onProgress(0);
+      function pollOnce() {
+        if (Date.now() >= deadline) {
+          return Promise.reject(new Error('Bloom API: timed out after 120s waiting for images to complete'));
+        }
+        var remainingSec = Math.max(1, Math.min(60, Math.ceil((deadline - Date.now()) / 1000)));
+        var qs = new URLSearchParams();
+        for (var i = 0; i < imageIds.length; i++) {
+          qs.append('ids', imageIds[i]);
+        }
+        qs.set('wait', 'true');
+        qs.set('timeout', String(remainingSec));
+        return bloomFetch('/images?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
+          lastImages = parseImagesList(raw);
+          var byId = {};
+          for (var k = 0; k < lastImages.length; k++) {
+            byId[lastImages[k].id] = lastImages[k];
+          }
+          var terminal = 0;
+          var failed = false;
+          for (var t = 0; t < imageIds.length; t++) {
+            var im = byId[imageIds[t]];
+            if (im && isTerminalStatus(im.status)) {
+              terminal += 1;
+              if (im.status === 'failed') failed = true;
+            }
+          }
+          onProgress(Math.round((terminal / imageIds.length) * 100));
+          if (failed) {
+            throw new Error('Bloom API: one or more images failed during generation');
+          }
+          if (terminal === imageIds.length) {
+            var ordered = imageIds
+              .map(function (id) {
+                return byId[id];
+              })
+              .filter(function (x) {
+                return x !== undefined;
+              });
+            onProgress(100);
+            if (ordered.length === imageIds.length) return ordered;
+            return lastImages.filter(function (im) {
+              return idSet[im.id];
+            });
+          }
+          return pollOnce();
+        });
+      }
+      return pollOnce();
+    }
+
+    /**
+     * Gets the credit balance for this API key.
+     */
+    function getCredits(apiKey) {
+      return bloomFetch('/credits', apiKey, { method: 'GET' }).then(function (raw) {
+        var data = unwrapData(raw);
+        var balance = data.balance != null ? data.balance : data.creditBalance != null ? data.creditBalance : data.credit_balance;
+        if (typeof balance === 'number' && isFinite(balance)) {
+          return balance;
+        }
+        if (typeof balance === 'string' && balance.trim() !== '' && isFinite(Number(balance))) {
+          return Number(balance);
+        }
+        if (data.unlimited === true) {
+          return Number.MAX_SAFE_INTEGER;
+        }
+        throw new Error('Bloom API: credits response did not include a numeric balance');
+      });
+    }
+
+    /* -------------------------------------------------------------------------- */
+    /* Setup view state */
+    /* -------------------------------------------------------------------------- */
+
+    var savedBrandId = null;
+
+    function setApiKeyError(text) {
+      var el = document.getElementById('api-key-error');
+      if (!el) return;
+      el.textContent = text || '';
+      if (text) el.classList.add('is-visible');
+      else el.classList.remove('is-visible');
+    }
+
+    function setConnectLoading(isLoading) {
+      var btn = document.getElementById('btn-setup-connect');
+      if (!btn) return;
+      btn.disabled = !!isLoading;
+      btn.textContent = isLoading ? 'Checking…' : 'Connect';
+    }
+
+    /**
+     * Connect button click handler
+     * 1. Reads API key from input
+     * 2. Calls validateApiKey() from bloom-client.ts
+     * 3. If valid: saves key via SAVE_KEY message, shows brand-select
+     * 4. If invalid: shows error message under input
+     */
+    function onConnectClick() {
+      var input = document.getElementById('api-key-input');
+      if (!input) return;
+      var key = (input.value || '').trim();
+      setApiKeyError('');
+      if (!key) {
+        setApiKeyError('Please enter your Bloom API key.');
+        return;
+      }
+      setConnectLoading(true);
+      validateApiKey(key)
+        .then(function (ok) {
+          setConnectLoading(false);
+          if (ok) {
+            postToCode({ type: 'SAVE_KEY', key: key });
+            showView('brand-select');
+            showToast('API key saved', false);
+          } else {
+            setApiKeyError('That API key is not valid. Check the key and try again.');
+          }
+        });
+    }
+
+    /**
+     * window.onmessage handler
+     * Handles these messages from code.ts:
+     *   KEY_LOADED — restore saved API key, validate, show correct view
+     *   KEY_SAVED  — no action needed
+     *   BRAND_LOADED — store brandId for later use
+     */
+    function onPluginMessage(event) {
+      var msg = event.data && event.data.pluginMessage;
+      if (!msg || typeof msg.type !== 'string') return;
+      switch (msg.type) {
+        case 'KEY_LOADED': {
+          var input = document.getElementById('api-key-input');
+          var key = msg.key != null ? String(msg.key) : '';
+          if (input) input.value = key;
+          if (!key) {
+            showView('setup');
+            return;
+          }
+          setConnectLoading(true);
+          validateApiKey(key)
+            .then(function (ok) {
+              setConnectLoading(false);
+              if (ok) {
+                showView('brand-select');
+              } else {
+                showView('setup');
+                setApiKeyError('Saved API key is no longer valid. Enter a new key.');
+              }
+            })
+            .catch(function () {
+              setConnectLoading(false);
+              showView('setup');
+              setApiKeyError('Could not validate saved key. Check your network.');
+            });
+          break;
+        }
+        case 'KEY_SAVED':
+          break;
+        case 'BRAND_LOADED':
+          savedBrandId = msg.brandId != null ? String(msg.brandId) : null;
+          break;
+        default:
+          break;
+      }
+    }
+
+    window.addEventListener('message', onPluginMessage);
+
+    var btnConnect = document.getElementById('btn-setup-connect');
+    if (btnConnect) btnConnect.addEventListener('click', onConnectClick);
+
+    /**
+     * On plugin load:
+     * 1. Post LOAD_KEY to code.ts to restore saved key
+     * 2. Post LOAD_BRAND to code.ts to restore saved brand
+     */
+    showView('setup');
+    postToCode({ type: 'LOAD_KEY' });
+    postToCode({ type: 'LOAD_BRAND' });
+  </script>
 </body>
 </html>

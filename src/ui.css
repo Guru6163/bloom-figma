@@ -1,5 +1,5 @@
 /**
- * Bloom plugin UI — loaded from dist/ui.html as ui.css (copied from src/ui.css at build time).
+ * Bloom plugin UI — bundled into dist/ui.html via ui-styles.ts (Figma cannot load sibling CSS via <link>).
  */
 
 /* =============================================================================
@@ -158,6 +158,19 @@ body {
 .textarea::placeholder {
   color: var(--muted);
   opacity: 0.85;
+}
+
+.field__error {
+  display: none;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--error);
+  line-height: 1.35;
+}
+
+.field__error.is-visible {
+  display: block;
 }
 
 .stack {
