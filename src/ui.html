@@ -77,6 +77,17 @@
           <p id="credits" class="credits-line">Credits: —</p>
           <div id="frame-pill" class="frame-pill" role="status">No frame selected</div>
         </div>
+        <div class="field style-ref-field">
+          <span class="field__label" id="style-ref-label">Style reference</span>
+          <p class="hint">Select an image on canvas then click to use as style reference.</p>
+          <div class="style-ref-row">
+            <button id="btn-style-ref-capture" type="button" class="btn-secondary">Use canvas image</button>
+            <button id="btn-style-ref-clear" type="button" class="btn-secondary" disabled>Clear</button>
+          </div>
+          <div id="style-ref-preview-wrap" class="style-ref-preview-wrap is-hidden">
+            <img id="style-ref-preview" class="style-ref-preview" alt="Style reference preview" width="72" height="72" decoding="async" src="" />
+          </div>
+        </div>
         <div class="field">
           <label class="field__label" for="prompt-input">Prompt</label>
           <textarea
@@ -116,10 +127,18 @@
         <div class="progress-wrap">
           <div class="progress-wrap__label">
             <span>Progress</span>
-            <span class="progress-wrap__value">42%</span>
+            <span id="gen-progress-value" class="progress-wrap__value">0%</span>
           </div>
-          <div class="progress-wrap__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="42" aria-label="Generation progress">
-            <div class="progress-wrap__fill"></div>
+          <div
+            id="gen-progress-track"
+            class="progress-wrap__track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-label="Generation progress"
+          >
+            <div id="gen-progress-fill" class="progress-wrap__fill"></div>
           </div>
         </div>
       </section>
@@ -130,77 +149,60 @@
           <h2 id="results-title" class="view__title">Your images</h2>
           <p class="view__lead">Tap an image to select it, then insert into Figma or open a full-size preview.</p>
         </div>
-        <div class="results-grid" role="list">
-          <button type="button" class="image-cell is-selected" role="listitem" aria-pressed="true">
-            <span class="image-cell__badge">1:1</span>
-            <!-- JS will swap src for real Bloom URLs; SVG placeholder avoids broken-image icon -->
-            <img
-              class="image-cell__thumb"
-              alt="Generated variant 1"
-              width="400"
-              height="400"
-              decoding="async"
-              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
-            />
-          </button>
-          <button type="button" class="image-cell" role="listitem" aria-pressed="false">
-            <span class="image-cell__badge">1:1</span>
-            <img
-              class="image-cell__thumb"
-              alt="Generated variant 2"
-              width="400"
-              height="400"
-              decoding="async"
-              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
-            />
-          </button>
-          <button type="button" class="image-cell" role="listitem" aria-pressed="false">
-            <span class="image-cell__badge">1:1</span>
-            <img
-              class="image-cell__thumb"
-              alt="Generated variant 3"
-              width="400"
-              height="400"
-              decoding="async"
-              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
-            />
-          </button>
-          <button type="button" class="image-cell" role="listitem" aria-pressed="false">
-            <span class="image-cell__badge">1:1</span>
-            <img
-              class="image-cell__thumb"
-              alt="Generated variant 4"
-              width="400"
-              height="400"
-              decoding="async"
-              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23ecdff9'/%3E%3Cstop offset='1' stop-color='%23e5d4f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E"
-            />
-          </button>
-        </div>
+        <div id="results-grid" class="results-grid" role="list"></div>
         <div class="row-actions">
-          <button type="button" class="btn-primary">Insert selected</button>
-          <button type="button" class="btn-secondary">New generation</button>
+          <button
+            id="btn-insert-selected"
+            type="button"
+            class="btn-primary"
+            data-default-label="Insert selected"
+          >
+            Insert selected
+          </button>
+          <button id="btn-new-generation" type="button" class="btn-secondary">New generation</button>
+          <button id="btn-regenerate" type="button" class="btn-secondary">Regenerate</button>
+        </div>
+        <div class="field edit-field">
+          <button id="btn-edit-toggle" type="button" class="btn-secondary" aria-expanded="false">Edit selected…</button>
+          <div id="edit-panel" class="edit-panel is-hidden">
+            <label class="field__label" for="edit-instruction">What to change</label>
+            <textarea
+              id="edit-instruction"
+              class="textarea"
+              rows="3"
+              maxlength="500"
+              placeholder="Describe the change you want…"
+            ></textarea>
+            <button id="btn-apply-edit" type="button" class="btn-primary">Apply edit</button>
+          </div>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- Toast: add .is-visible (+ optional .toast--error / .toast--success) via JS later -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <!-- Full-size preview: add .is-open to show; JS will set image src -->
   <div id="zoom-overlay" class="zoom-overlay" aria-hidden="true">
-    <button type="button" class="zoom-overlay__close" aria-label="Close preview">×</button>
-    <figure class="zoom-overlay__frame">
-      <img
-        class="zoom-overlay__img"
-        alt="Full size preview"
-        width="1200"
-        height="1200"
-        decoding="async"
-        src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='1200'%3E%3Crect fill='%23f2e8fb' width='100%25' height='100%25'/%3E%3C/svg%3E"
-      />
-    </figure>
+    <button type="button" class="zoom-overlay__scrim" id="zoom-scrim" aria-label="Close preview"></button>
+    <div class="zoom-overlay__panel">
+      <button type="button" class="zoom-overlay__close" id="zoom-close" aria-label="Close preview">×</button>
+      <div class="zoom-overlay__toolbar">
+        <button type="button" class="zoom-overlay__toolbtn" id="zoom-prev">Prev</button>
+        <button type="button" class="zoom-overlay__toolbtn" id="zoom-next">Next</button>
+        <button type="button" class="zoom-overlay__toolbtn" id="zoom-select-this">Select this image</button>
+      </div>
+      <figure class="zoom-overlay__frame">
+        <img
+          id="zoom-overlay-img"
+          class="zoom-overlay__img"
+          alt="Full size preview"
+          width="1200"
+          height="1200"
+          decoding="async"
+          src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='1200'%3E%3Crect fill='%23f2e8fb' width='100%25' height='100%25'/%3E%3C/svg%3E"
+        />
+      </figure>
+    </div>
   </div>
 
   <script>
@@ -245,6 +247,7 @@
         renderFramePill();
         renderVariants();
         renderRatios();
+        updateStyleRefUi();
         syncPromptUi();
       }
     }
@@ -277,6 +280,17 @@
     /* -------------------------------------------------------------------------- */
 
     var BLOOM_BASE = 'https://www.trybloom.ai/api/v1';
+    var BLOOM_ORIGIN = 'https://www.trybloom.ai';
+
+    function getImageUrl(raw) {
+      if (raw == null || typeof raw !== 'string') return '';
+      var u = raw.trim();
+      if (u === '') return '';
+      if (u.indexOf('https://') === 0 || u.indexOf('http://') === 0) return u;
+      if (u.indexOf('//') === 0) return 'https:' + u;
+      if (u.indexOf('/') === 0) return BLOOM_ORIGIN + u;
+      return u;
+    }
 
     function extractErrorMessage(body) {
       if (!body || typeof body !== 'object') return undefined;
@@ -293,37 +307,40 @@
      */
     function bloomFetch(path, apiKey, options) {
       if (options === void 0) options = {};
-      var normalizedPath = path.indexOf('/') === 0 ? path : '/' + path;
-      var url = BLOOM_BASE + normalizedPath;
-      var headers = new Headers(options.headers || undefined);
-      headers.set('x-api-key', apiKey);
-      if (options.body !== undefined && !headers.has('Content-Type')) {
-        headers.set('Content-Type', 'application/json');
-      }
-      return fetch(url, Object.assign({}, options, { headers: headers }))
-        .catch(function (e) {
-          var msg = e instanceof Error ? e.message : String(e);
-          throw new Error('Bloom API request failed: ' + msg);
-        })
-        .then(function (res) {
-          return res.text().then(function (text) {
-            var body = null;
-            if (text) {
-              try {
-                body = JSON.parse(text);
-              } catch (_e) {
-                body = text;
-              }
+      return (async function () {
+        try {
+          var normalizedPath = path.indexOf('/') === 0 ? path : '/' + path;
+          var url = BLOOM_BASE + normalizedPath;
+          var headers = new Headers(options.headers || undefined);
+          headers.set('x-api-key', apiKey);
+          if (options.body !== undefined && !headers.has('Content-Type')) {
+            headers.set('Content-Type', 'application/json');
+          }
+          var res = await fetch(url, Object.assign({}, options, { headers: headers }));
+          var text = await res.text();
+          var body = null;
+          if (text) {
+            try {
+              body = JSON.parse(text);
+            } catch (_parse) {
+              body = text;
             }
-            if (!res.ok) {
-              var extracted = extractErrorMessage(body);
-              var detail =
-                extracted != null ? extracted : typeof body === 'string' ? body : res.statusText;
-              throw new Error('Bloom API ' + res.status + ' ' + res.statusText + (detail ? ': ' + detail : ''));
-            }
-            return body;
-          });
-        });
+          }
+          if (!res.ok) {
+            var extracted = extractErrorMessage(body);
+            var detail =
+              extracted != null ? extracted : typeof body === 'string' ? body : res.statusText;
+            throw new Error('Bloom API ' + res.status + ' ' + res.statusText + (detail ? ': ' + detail : ''));
+          }
+          return body;
+        } catch (err) {
+          if (err instanceof Error && err.message.indexOf('Bloom API') === 0) {
+            throw err;
+          }
+          var m = err instanceof Error ? err.message : String(err);
+          throw new Error("We couldn't reach Bloom. Check your network and try again. " + m);
+        }
+      })();
     }
 
     /**
@@ -335,7 +352,11 @@
         .then(function () {
           return true;
         })
-        .catch(function () {
+        .catch(function (e) {
+          var msg = e instanceof Error ? e.message : String(e);
+          if (msg.indexOf("We couldn't reach Bloom") !== -1) {
+            throw new Error(msg);
+          }
           return false;
         });
     }
@@ -455,23 +476,50 @@
     }
 
     function parseGenerationImageIds(body) {
-      var data = unwrapData(body);
-      var ids =
-        data.imageIds != null
-          ? data.imageIds
-          : data.image_ids != null
-            ? data.image_ids
-            : Array.isArray(data.images)
-              ? data.images.map(function (x) {
-                  return x.id;
-                })
-              : undefined;
-      if (Array.isArray(ids)) {
-        return ids.filter(function (x) {
-          return typeof x === 'string';
-        });
+      function collectIds(o) {
+        if (!o || typeof o !== 'object') return [];
+        var ids =
+          o.imageIds != null
+            ? o.imageIds
+            : o.image_ids != null
+              ? o.image_ids
+              : o.generatedImageIds != null
+                ? o.generatedImageIds
+                : o.generated_image_ids != null
+                  ? o.generated_image_ids
+                  : undefined;
+        if (Array.isArray(ids)) {
+          return ids.filter(function (x) {
+            return typeof x === 'string';
+          });
+        }
+        if (Array.isArray(o.images)) {
+          return o.images
+            .map(function (x) {
+              if (!x || typeof x !== 'object') return null;
+              return x.id != null ? String(x.id) : null;
+            })
+            .filter(function (x) {
+              return typeof x === 'string' && x !== '';
+            });
+        }
+        if (typeof o.id === 'string' && o.id !== '') return [o.id];
+        return [];
       }
-      return [];
+      var root = body && typeof body === 'object' ? body : {};
+      var data = unwrapData(body);
+      if (Array.isArray(data)) {
+        var arrOut = [];
+        for (var ai = 0; ai < data.length; ai++) {
+          var el = data[ai];
+          if (typeof el === 'string' && el !== '') arrOut.push(el);
+          else if (el && typeof el === 'object' && el.id != null) arrOut.push(String(el.id));
+        }
+        if (arrOut.length > 0) return arrOut;
+      }
+      var fromData = collectIds(data && typeof data === 'object' && !Array.isArray(data) ? data : null);
+      if (fromData.length > 0) return fromData;
+      return collectIds(root);
     }
 
     /**
@@ -486,8 +534,11 @@
         body: JSON.stringify({
           prompt: prompt,
           brandSessionId: brandSessionId,
+          brand_session_id: brandSessionId,
           aspectRatio: aspectRatio,
+          aspect_ratio: aspectRatio,
           variantCount: clamped,
+          variant_count: clamped,
         }),
       }).then(function (raw) {
         var ids = parseGenerationImageIds(raw);
@@ -495,6 +546,19 @@
           throw new Error('Bloom API: image generation returned no image IDs');
         }
         return ids;
+      });
+    }
+
+    function editImage(apiKey, imageId, instruction) {
+      return bloomFetch('/images/' + encodeURIComponent(imageId) + '/edit', apiKey, {
+        method: 'POST',
+        body: JSON.stringify({ instruction: instruction }),
+      }).then(function (raw) {
+        var ids = parseGenerationImageIds(raw);
+        if (ids.length > 0) return ids;
+        var d = unwrapData(raw);
+        if (d && typeof d === 'object' && typeof d.id === 'string' && d.id) return [d.id];
+        throw new Error('Bloom API: edit returned no image IDs');
       });
     }
 
@@ -510,10 +574,11 @@
         var o = item && typeof item === 'object' ? item : {};
         var id = String(o.id != null ? o.id : '');
         var status = o.status != null ? o.status : 'pending';
-        var imageUrl =
+        var rawUrl =
           o.imageUrl !== undefined || o.image_url !== undefined
             ? String(o.imageUrl != null ? o.imageUrl : o.image_url)
             : undefined;
+        var imageUrl = rawUrl !== undefined ? getImageUrl(rawUrl) : undefined;
         return { id: id, status: status, imageUrl: imageUrl };
       });
     }
@@ -622,6 +687,10 @@
       return input ? String(input.value || '').trim() : '';
     }
 
+    function getBrandSessionId() {
+      return savedBrandId || selectedBrandId || '';
+    }
+
     /* -------------------------------------------------------------------------- */
     /* Generator view state */
     /* -------------------------------------------------------------------------- */
@@ -637,6 +706,19 @@
     /** 'auto' | '1:1' | '4:5' | '9:16' | '16:9' */
     var selectedRatio = 'auto';
     var variantCount = 1;
+    var _generationRunning = false;
+    var generationResults = [];
+    var selectedImageId = null;
+    var lastPromptForInsert = '';
+    var zoomOpenIndex = 0;
+    var _batchWaitResolve = null;
+    var _batchWaitReject = null;
+    var _insertFlashTimer = null;
+    var lastGenerateSnapshot = null;
+    var styleReferenceDataUrl = null;
+    var _editRunning = false;
+    var STYLE_REF_SUFFIX =
+      '\n\nStyle reference: Match the color palette, lighting, and overall visual mood of the user-selected reference image from the canvas.';
 
     /**
      * Asks code.ts for the current Figma selection (replies via postMessage).
@@ -672,6 +754,14 @@
         return a.dist - b.dist;
       });
       return matches[0].id;
+    }
+
+    function getEffectiveAspectRatio() {
+      if (selectedRatio !== 'auto') return selectedRatio;
+      if (frameWidth != null && frameHeight != null && frameWidth > 0 && frameHeight > 0) {
+        return detectAspectRatio(frameWidth, frameHeight);
+      }
+      return '1:1';
     }
 
     /**
@@ -798,7 +888,510 @@
         raw = ta.value;
       }
       if (countEl) countEl.textContent = String(raw.length) + '/500';
-      if (btn) btn.disabled = raw.trim().length === 0;
+      if (btn) btn.disabled = _generationRunning || raw.trim().length === 0;
+    }
+
+    function buildApiPrompt(baseText) {
+      var trimmed = (baseText || '').trim();
+      if (styleReferenceDataUrl) return trimmed + STYLE_REF_SUFFIX;
+      return trimmed;
+    }
+
+    function updateStyleRefUi() {
+      var wrap = document.getElementById('style-ref-preview-wrap');
+      var img = document.getElementById('style-ref-preview');
+      var clearBtn = document.getElementById('btn-style-ref-clear');
+      if (styleReferenceDataUrl && img && wrap) {
+        img.src = styleReferenceDataUrl;
+        wrap.classList.remove('is-hidden');
+        if (clearBtn) clearBtn.disabled = false;
+      } else {
+        if (wrap) wrap.classList.add('is-hidden');
+        if (img) {
+          img.removeAttribute('src');
+        }
+        if (clearBtn) clearBtn.disabled = true;
+      }
+      syncPromptUi();
+    }
+
+    function setGeneratingTitle(title, lead) {
+      var t = document.getElementById('gen-loading-title');
+      var leadEl = document.querySelector('#generating .tight-lead');
+      if (t) t.textContent = title || 'Creating images…';
+      if (leadEl) leadEl.textContent = lead || 'This can take about a minute. You can keep working in Figma.';
+    }
+
+    function setGeneratingProgress(percent) {
+      var clamped = Math.max(0, Math.min(100, Math.round(percent)));
+      var fill = document.getElementById('gen-progress-fill');
+      var val = document.getElementById('gen-progress-value');
+      var track = document.getElementById('gen-progress-track');
+      if (fill) fill.style.width = String(clamped) + '%';
+      if (val) val.textContent = String(clamped) + '%';
+      if (track) track.setAttribute('aria-valuenow', String(clamped));
+    }
+
+    function waitForBatchComplete() {
+      return new Promise(function (resolve, reject) {
+        _batchWaitResolve = resolve;
+        _batchWaitReject = reject;
+      });
+    }
+
+    /**
+     * runGeneration()
+     * The core generation flow:
+     * 1. Get effective aspect ratio (Auto → detect from frame)
+     * 2. Show generating view with progress bar
+     * 3. Call generateImages() with prompt, ratio, variants
+     * 4. Call pollImages() — updates progress bar 0-100%
+     * 5. On success: store results, call showResults(), show results view
+     * 6. On error: show toast, return to generator view
+     */
+    async function runGenerationCore(apiPrompt, insertPromptLabel, effectiveRatio, vc) {
+      var apiKey = getApiKey();
+      var brandSessionId = getBrandSessionId();
+      if (!apiKey || !brandSessionId || !String(apiPrompt || '').trim()) {
+        showToast('Add API key, brand, and a prompt', true);
+        return;
+      }
+      lastPromptForInsert = insertPromptLabel;
+      _generationRunning = true;
+      syncPromptUi();
+      setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+      showView('generating');
+      setGeneratingProgress(0);
+      try {
+        var ids = await generateImages(apiKey, brandSessionId, apiPrompt, effectiveRatio, vc);
+        var images = await pollImages(apiKey, ids, function (p) {
+          setGeneratingProgress(p);
+        });
+        generationResults = images.map(function (im) {
+          return {
+            id: im.id,
+            imageUrl: im.imageUrl != null ? getImageUrl(String(im.imageUrl)) : '',
+            aspectRatio: effectiveRatio,
+          };
+        });
+        lastGenerateSnapshot = {
+          basePrompt: insertPromptLabel,
+          effectiveRatio: effectiveRatio,
+          variantCount: vc,
+        };
+        showResults();
+        showView('results');
+        void loadCredits();
+      } catch (err) {
+        var em = err instanceof Error ? err.message : String(err);
+        showToast(em, true);
+        showView('generator');
+      } finally {
+        _generationRunning = false;
+        syncPromptUi();
+      }
+    }
+
+    async function runGeneration() {
+      var ta = document.getElementById('prompt-input');
+      var base = ta ? String(ta.value || '').trim() : '';
+      if (!base) {
+        showToast('Enter a prompt', true);
+        return;
+      }
+      var effectiveRatio = getEffectiveAspectRatio();
+      var apiPrompt = buildApiPrompt(base);
+      await runGenerationCore(apiPrompt, base, effectiveRatio, variantCount);
+    }
+
+    function onRegenerateClick() {
+      if (_generationRunning || !lastGenerateSnapshot) return;
+      var snap = lastGenerateSnapshot;
+      var apiPrompt = buildApiPrompt(snap.basePrompt);
+      void runGenerationCore(apiPrompt, snap.basePrompt, snap.effectiveRatio, snap.variantCount);
+    }
+
+    /**
+     * runBatchGeneration()
+     * For batch mode (multiple frames selected):
+     * 1. Loop through each frame
+     * 2. Detect aspect ratio per frame
+     * 3. Generate 1 image per frame
+     * 4. Collect all results
+     * 5. Send BATCH_INSERT to code.ts with all items
+     * 6. Update progress bar: (framesComplete / totalFrames) * 100
+     */
+    async function runBatchGeneration() {
+      var apiKey = getApiKey();
+      var brandSessionId = getBrandSessionId();
+      var ta = document.getElementById('prompt-input');
+      var prompt = ta ? String(ta.value || '').trim() : '';
+      if (!apiKey || !brandSessionId || !prompt) {
+        showToast('Add API key, brand, and a prompt', true);
+        return;
+      }
+      if (!batchFrames.length) {
+        showToast('Select multiple frames', true);
+        return;
+      }
+      lastPromptForInsert = prompt;
+      _generationRunning = true;
+      syncPromptUi();
+      setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+      showView('generating');
+      setGeneratingProgress(0);
+      var totalFrames = batchFrames.length;
+      var framesDone = 0;
+      var apiPrompt = buildApiPrompt(prompt);
+      try {
+        var items = [];
+        for (var fi = 0; fi < totalFrames; fi++) {
+          var fr = batchFrames[fi];
+          var ratio = detectAspectRatio(fr.width, fr.height);
+          var ids = await generateImages(apiKey, brandSessionId, apiPrompt, ratio, 1);
+          var imgs = await pollImages(apiKey, ids, function (p) {
+            var overall = ((framesDone + p / 100) / totalFrames) * 100;
+            setGeneratingProgress(Math.round(overall));
+          });
+          var first = imgs[0];
+          if (!first || !first.imageUrl) {
+            throw new Error('Missing image URL for frame');
+          }
+          items.push({
+            frameId: String(fr.id),
+            imageUrl: getImageUrl(String(first.imageUrl)),
+            prompt: prompt,
+            aspectRatio: ratio,
+          });
+          framesDone += 1;
+          setGeneratingProgress(Math.round((framesDone / totalFrames) * 100));
+        }
+        var donePromise = waitForBatchComplete();
+        postToCode({ type: 'BATCH_INSERT', items: items });
+        await donePromise;
+        showToast('Inserted into frames', false);
+        showView('generator');
+        void loadCredits();
+      } catch (err) {
+        var em = err instanceof Error ? err.message : String(err);
+        showToast(em, true);
+        showView('generator');
+      } finally {
+        _generationRunning = false;
+        _batchWaitResolve = null;
+        _batchWaitReject = null;
+        syncPromptUi();
+        setGeneratingProgress(0);
+        setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+      }
+    }
+
+    /**
+     * showResults()
+     * Renders the results grid with generated images.
+     * 2-column grid (1-column if only 1 image).
+     * Each cell:
+     *   - Shows placeholder spinner while image loads
+     *   - Renders image when URL available
+     *   - Click to select (highlighted border)
+     *   - Double-click to open zoom overlay
+     * First image auto-selected.
+     */
+    function showResults() {
+      var grid = document.getElementById('results-grid');
+      if (!grid) return;
+      grid.innerHTML = '';
+      grid.classList.toggle('results-grid--single', generationResults.length <= 1);
+      selectedImageId = generationResults.length > 0 ? generationResults[0].id : null;
+      for (var i = 0; i < generationResults.length; i++) {
+        (function (idx) {
+          var r = generationResults[idx];
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'image-cell' + (r.id === selectedImageId ? ' is-selected' : '');
+          btn.setAttribute('role', 'listitem');
+          btn.setAttribute('aria-pressed', r.id === selectedImageId ? 'true' : 'false');
+          btn.setAttribute('data-image-id', r.id);
+
+          var badge = document.createElement('span');
+          badge.className = 'image-cell__badge';
+          badge.textContent = r.aspectRatio || '—';
+
+          var loadWrap = document.createElement('div');
+          loadWrap.className = 'image-cell__loading';
+          var sp = document.createElement('div');
+          sp.className = 'spinner';
+          sp.setAttribute('aria-hidden', 'true');
+          loadWrap.appendChild(sp);
+
+          var img = document.createElement('img');
+          img.className = 'image-cell__thumb';
+          img.alt = 'Generated variant ' + String(idx + 1);
+          img.decoding = 'async';
+          img.width = 400;
+          img.height = 400;
+          img.onload = function () {
+            loadWrap.classList.add('is-hidden');
+          };
+          var resolved = getImageUrl(r.imageUrl);
+          img.onerror = function () {
+            loadWrap.classList.add('is-hidden');
+            if (resolved) postToCode({ type: 'FETCH_IMAGE_DATA', url: resolved, imageId: r.id });
+          };
+          if (resolved) img.src = resolved;
+
+          btn.appendChild(badge);
+          btn.appendChild(loadWrap);
+          btn.appendChild(img);
+
+          btn.addEventListener('click', function () {
+            selectedImageId = r.id;
+            syncResultsGridSelection();
+          });
+          btn.addEventListener('dblclick', function (ev) {
+            ev.preventDefault();
+            openZoom(idx);
+          });
+          grid.appendChild(btn);
+        })(i);
+      }
+      var regenBtn = document.getElementById('btn-regenerate');
+      if (regenBtn) regenBtn.disabled = !lastGenerateSnapshot;
+    }
+
+    function syncResultsGridSelection() {
+      var grid = document.getElementById('results-grid');
+      if (!grid) return;
+      var cells = grid.querySelectorAll('.image-cell');
+      for (var c = 0; c < cells.length; c++) {
+        var cell = cells[c];
+        var id = cell.getAttribute('data-image-id');
+        var on = id === selectedImageId;
+        cell.classList.toggle('is-selected', on);
+        cell.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    }
+
+    function getSelectedResult() {
+      for (var i = 0; i < generationResults.length; i++) {
+        if (generationResults[i].id === selectedImageId) return generationResults[i];
+      }
+      return generationResults.length > 0 ? generationResults[0] : null;
+    }
+
+    function getSelectedImageUrl() {
+      var r = getSelectedResult();
+      return r && r.imageUrl ? r.imageUrl : '';
+    }
+
+    function getSelectedResultAspectRatio() {
+      var r = getSelectedResult();
+      return r && r.aspectRatio ? r.aspectRatio : '1:1';
+    }
+
+    function isZoomOverlayOpen() {
+      var ov = document.getElementById('zoom-overlay');
+      return !!(ov && ov.classList.contains('is-open'));
+    }
+
+    function openZoom(index) {
+      if (!generationResults.length) return;
+      var n = generationResults.length;
+      var clamped = Math.max(0, Math.min(n - 1, index));
+      zoomOpenIndex = clamped;
+      var r = generationResults[clamped];
+      var img = document.getElementById('zoom-overlay-img');
+      var ov = document.getElementById('zoom-overlay');
+      if (img && r && r.imageUrl) img.src = getImageUrl(r.imageUrl);
+      if (ov) {
+        ov.classList.add('is-open');
+        ov.setAttribute('aria-hidden', 'false');
+      }
+      updateZoomNavState();
+    }
+
+    function closeZoom() {
+      var ov = document.getElementById('zoom-overlay');
+      if (ov) {
+        ov.classList.remove('is-open');
+        ov.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    function updateZoomNavState() {
+      var n = generationResults.length;
+      var prev = document.getElementById('zoom-prev');
+      var next = document.getElementById('zoom-next');
+      if (prev) prev.disabled = n <= 1;
+      if (next) next.disabled = n <= 1;
+    }
+
+    function flashInsertButton(label) {
+      var btn = document.getElementById('btn-insert-selected');
+      if (!btn) return;
+      var def = btn.getAttribute('data-default-label') || 'Insert selected';
+      if (_insertFlashTimer) clearTimeout(_insertFlashTimer);
+      btn.textContent = label;
+      _insertFlashTimer = setTimeout(function () {
+        btn.textContent = def;
+        _insertFlashTimer = null;
+      }, 1800);
+    }
+
+    function onGenerateClick() {
+      if (_generationRunning) return;
+      if (isBatchMode) {
+        void runBatchGeneration();
+      } else {
+        void runGeneration();
+      }
+    }
+
+    function onInsertSelectedClick() {
+      var url = getSelectedImageUrl();
+      if (!url) {
+        showToast('Select an image', true);
+        return;
+      }
+      var pr =
+        lastPromptForInsert ||
+        (document.getElementById('prompt-input') ? String(document.getElementById('prompt-input').value || '').trim() : '');
+      var ratio = getSelectedResultAspectRatio();
+      if (isReplaceMode && frameId) {
+        postToCode({ type: 'REPLACE_IMAGE', nodeId: frameId, imageUrl: getImageUrl(url) });
+      } else {
+        postToCode({ type: 'INSERT_IMAGE', imageUrl: getImageUrl(url), prompt: pr, aspectRatio: ratio });
+      }
+    }
+
+    function onNewGenerationClick() {
+      closeZoom();
+      showView('generator');
+    }
+
+    function onDocumentKeydown(ev) {
+      if (ev.key === 'Escape' && isZoomOverlayOpen()) {
+        ev.preventDefault();
+        closeZoom();
+      }
+    }
+
+    function markImageCellUnavailable(imageId) {
+      if (!imageId) return;
+      var grid = document.getElementById('results-grid');
+      if (!grid) return;
+      var cells = grid.querySelectorAll('.image-cell');
+      for (var i = 0; i < cells.length; i++) {
+        if (cells[i].getAttribute('data-image-id') === imageId) {
+          cells[i].classList.add('image-cell--unavailable');
+          var ph = cells[i].querySelector('.image-cell__unavailable');
+          if (!ph) {
+            ph = document.createElement('span');
+            ph.className = 'image-cell__unavailable';
+            cells[i].appendChild(ph);
+          }
+          ph.textContent = 'Image unavailable';
+          return;
+        }
+      }
+    }
+
+    function applyImageDataUrlToCell(imageId, dataUrl) {
+      if (!imageId || !dataUrl) return;
+      for (var ri = 0; ri < generationResults.length; ri++) {
+        if (generationResults[ri].id === imageId) {
+          generationResults[ri].imageUrl = dataUrl;
+          break;
+        }
+      }
+      var grid = document.getElementById('results-grid');
+      if (!grid) return;
+      var cells = grid.querySelectorAll('.image-cell');
+      for (var c = 0; c < cells.length; c++) {
+        if (cells[c].getAttribute('data-image-id') === imageId) {
+          var thumb = cells[c].querySelector('.image-cell__thumb');
+          if (thumb) thumb.src = dataUrl;
+          cells[c].classList.remove('image-cell--unavailable');
+          var un = cells[c].querySelector('.image-cell__unavailable');
+          if (un) un.remove();
+          return;
+        }
+      }
+    }
+
+    function onEditToggleClick() {
+      var panel = document.getElementById('edit-panel');
+      var btn = document.getElementById('btn-edit-toggle');
+      if (!panel || !btn) return;
+      panel.classList.toggle('is-hidden');
+      var visible = !panel.classList.contains('is-hidden');
+      btn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+    }
+
+    function onStyleRefCaptureClick() {
+      postToCode({ type: 'GET_SELECTED_IMAGE_URL' });
+    }
+
+    function onStyleRefClearClick() {
+      styleReferenceDataUrl = null;
+      updateStyleRefUi();
+    }
+
+    async function onApplyEditClick() {
+      if (_editRunning || _generationRunning) return;
+      var sel = getSelectedResult();
+      var instEl = document.getElementById('edit-instruction');
+      var instruction = instEl ? String(instEl.value || '').trim() : '';
+      if (!sel || !instruction) {
+        showToast('Select an image and describe your edit', true);
+        return;
+      }
+      var apiKey = getApiKey();
+      var brandSessionId = getBrandSessionId();
+      if (!apiKey || !brandSessionId) {
+        showToast('Add API key and brand', true);
+        return;
+      }
+      _editRunning = true;
+      var applyBtn = document.getElementById('btn-apply-edit');
+      if (applyBtn) applyBtn.disabled = true;
+      setGeneratingTitle('Applying edits…', 'This may take up to a minute.');
+      showView('generating');
+      setGeneratingProgress(0);
+      try {
+        var ids = await editImage(apiKey, sel.id, instruction);
+        var images = await pollImages(apiKey, ids, function (p) {
+          setGeneratingProgress(p);
+        });
+        var done = images[0];
+        if (!done || !done.imageUrl) {
+          throw new Error('Edit finished without an image URL');
+        }
+        var newUrl = getImageUrl(String(done.imageUrl));
+        var idx = -1;
+        for (var j = 0; j < generationResults.length; j++) {
+          if (generationResults[j].id === sel.id) idx = j;
+        }
+        if (idx >= 0) {
+          generationResults[idx] = {
+            id: done.id,
+            imageUrl: newUrl,
+            aspectRatio: generationResults[idx].aspectRatio,
+          };
+          selectedImageId = done.id;
+        }
+        setGeneratingTitle('Creating images…', 'This can take about a minute. You can keep working in Figma.');
+        showResults();
+        showView('results');
+        void loadCredits();
+        if (instEl) instEl.value = '';
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : String(e), true);
+        showView('results');
+      } finally {
+        _editRunning = false;
+        if (applyBtn) applyBtn.disabled = false;
+      }
     }
 
     function setBrandListError(text) {
@@ -1114,6 +1707,10 @@
           } else {
             setApiKeyError('That API key is not valid. Check the key and try again.');
           }
+        })
+        .catch(function (err) {
+          setConnectLoading(false);
+          showToast(err instanceof Error ? err.message : "Couldn't verify your key. Check your network.", true);
         });
     }
 
@@ -1124,11 +1721,18 @@
      *   KEY_SAVED  — no action needed
      *   BRAND_LOADED — store brandId for later use
      *   FRAME_SELECTED, IMAGE_LAYER_SELECTED, MULTI_FRAME_SELECTED, NO_FRAME_SELECTED — canvas selection
+     *   INSERT_SUCCESS, REPLACE_SUCCESS — flash insert button label
+     *   INSERT_ERROR, BATCH_ERROR — error toasts
+     *   BATCH_COMPLETE — resolves batch insert wait in UI
+     *   SELECTED_IMAGE_URL, SELECTED_IMAGE_URL_ERROR — style reference from canvas
+     *   IMAGE_DATA_RESULT, IMAGE_DATA_ERROR — CORS fallback for result thumbnails
+     *   PLUGIN_ERROR — generic plugin handler failure
      */
     function onPluginMessage(event) {
-      var msg = event.data && event.data.pluginMessage;
-      if (!msg || typeof msg.type !== 'string') return;
-      switch (msg.type) {
+      try {
+        var msg = event.data && event.data.pluginMessage;
+        if (!msg || typeof msg.type !== 'string') return;
+        switch (msg.type) {
         case 'KEY_LOADED': {
           var input = document.getElementById('api-key-input');
           var key = msg.key != null ? String(msg.key) : '';
@@ -1148,10 +1752,11 @@
                 setApiKeyError('Saved API key is no longer valid. Enter a new key.');
               }
             })
-            .catch(function () {
+            .catch(function (err) {
               setConnectLoading(false);
               showView('setup');
-              setApiKeyError('Could not validate saved key. Check your network.');
+              var em = err instanceof Error ? err.message : String(err);
+              setApiKeyError(em.indexOf("We couldn't reach Bloom") !== -1 ? em : 'Could not validate saved key. Check your network.');
             });
           break;
         }
@@ -1213,8 +1818,56 @@
           batchFrames = [];
           renderFramePill();
           break;
+        case 'INSERT_SUCCESS':
+          flashInsertButton('Inserted');
+          break;
+        case 'REPLACE_SUCCESS':
+          flashInsertButton('Replaced');
+          break;
+        case 'BATCH_COMPLETE':
+          if (_batchWaitResolve) {
+            _batchWaitResolve();
+            _batchWaitResolve = null;
+            _batchWaitReject = null;
+          }
+          break;
+        case 'INSERT_ERROR':
+          showToast(msg.message != null ? String(msg.message) : 'Insert failed', true);
+          break;
+        case 'BATCH_ERROR':
+          if (_batchWaitReject) {
+            _batchWaitReject(new Error(msg.message != null ? String(msg.message) : 'Batch failed'));
+            _batchWaitResolve = null;
+            _batchWaitReject = null;
+          } else {
+            showToast(msg.message != null ? String(msg.message) : 'Batch failed', true);
+          }
+          break;
+        case 'SELECTED_IMAGE_URL':
+          if (msg.dataUrl != null && String(msg.dataUrl) !== '') {
+            styleReferenceDataUrl = String(msg.dataUrl);
+            updateStyleRefUi();
+          }
+          break;
+        case 'SELECTED_IMAGE_URL_ERROR':
+          showToast('Select an image layer first', true);
+          break;
+        case 'IMAGE_DATA_RESULT':
+          if (msg.dataUrl != null && msg.imageId != null) {
+            applyImageDataUrlToCell(String(msg.imageId), String(msg.dataUrl));
+          }
+          break;
+        case 'IMAGE_DATA_ERROR':
+          if (msg.imageId != null) markImageCellUnavailable(String(msg.imageId));
+          break;
+        case 'PLUGIN_ERROR':
+          if (msg.message != null) showToast(String(msg.message), true);
+          break;
         default:
           break;
+      }
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : 'Something went wrong.', true);
       }
     }
 
@@ -1246,6 +1899,69 @@
         showView('brand-select');
       });
     }
+
+    var btnGenerate = document.getElementById('btn-generate');
+    if (btnGenerate) btnGenerate.addEventListener('click', onGenerateClick);
+
+    var btnInsertSelected = document.getElementById('btn-insert-selected');
+    if (btnInsertSelected) btnInsertSelected.addEventListener('click', onInsertSelectedClick);
+
+    var btnNewGeneration = document.getElementById('btn-new-generation');
+    if (btnNewGeneration) btnNewGeneration.addEventListener('click', onNewGenerationClick);
+
+    var btnRegenerate = document.getElementById('btn-regenerate');
+    if (btnRegenerate) btnRegenerate.addEventListener('click', onRegenerateClick);
+
+    var btnEditToggle = document.getElementById('btn-edit-toggle');
+    if (btnEditToggle) btnEditToggle.addEventListener('click', onEditToggleClick);
+
+    var btnApplyEdit = document.getElementById('btn-apply-edit');
+    if (btnApplyEdit) btnApplyEdit.addEventListener('click', function () {
+      void onApplyEditClick();
+    });
+
+    var btnStyleRefCapture = document.getElementById('btn-style-ref-capture');
+    if (btnStyleRefCapture) btnStyleRefCapture.addEventListener('click', onStyleRefCaptureClick);
+
+    var btnStyleRefClear = document.getElementById('btn-style-ref-clear');
+    if (btnStyleRefClear) btnStyleRefClear.addEventListener('click', onStyleRefClearClick);
+
+    var zoomScrim = document.getElementById('zoom-scrim');
+    if (zoomScrim) zoomScrim.addEventListener('click', closeZoom);
+
+    var zoomClose = document.getElementById('zoom-close');
+    if (zoomClose) zoomClose.addEventListener('click', closeZoom);
+
+    var zoomPrev = document.getElementById('zoom-prev');
+    if (zoomPrev) {
+      zoomPrev.addEventListener('click', function () {
+        var n = generationResults.length;
+        if (n <= 1) return;
+        openZoom((zoomOpenIndex - 1 + n) % n);
+      });
+    }
+
+    var zoomNext = document.getElementById('zoom-next');
+    if (zoomNext) {
+      zoomNext.addEventListener('click', function () {
+        var n = generationResults.length;
+        if (n <= 1) return;
+        openZoom((zoomOpenIndex + 1) % n);
+      });
+    }
+
+    var zoomSelectThis = document.getElementById('zoom-select-this');
+    if (zoomSelectThis) {
+      zoomSelectThis.addEventListener('click', function () {
+        var r = generationResults[zoomOpenIndex];
+        if (r) {
+          selectedImageId = r.id;
+          syncResultsGridSelection();
+        }
+      });
+    }
+
+    document.addEventListener('keydown', onDocumentKeydown);
 
     /**
      * On plugin load:

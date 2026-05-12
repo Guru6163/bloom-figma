@@ -6,8 +6,6 @@
  * Communicates with ui.html exclusively via postMessage.
  */
 
-// --- Incoming messages (UI → main) ---
-
 /** Discriminated union of all messages the UI may send to the plugin main thread. */
 type PluginMessage =
   | { type: 'LOAD_KEY' }
@@ -22,7 +20,7 @@ type PluginMessage =
       items: Array<{ frameId: string; imageUrl: string; prompt: string; aspectRatio: string }>;
     }
   | { type: 'GET_SELECTED_IMAGE_URL' }
-  | { type: 'FETCH_IMAGE_DATA'; url: string }
+  | { type: 'FETCH_IMAGE_DATA'; url: string; imageId?: string }
   | { type: 'CLOSE' };
 
 /** Payload describing the current canvas selection for the UI. */
@@ -132,7 +130,11 @@ function analyzeSelection(): SelectionInfoMessage {
  * Call on plugin open and whenever the selection changes.
  */
 async function sendSelectionInfo(): Promise<void> {
-  figma.ui.postMessage(analyzeSelection());
+  try {
+    figma.ui.postMessage(analyzeSelection());
+  } catch (e) {
+    postPluginError('sendSelectionInfo', e);
+  }
 }
 
 /**
@@ -170,12 +172,20 @@ function buildBloomLayerName(prompt: string, aspectRatio: string): string {
  * Downloads a remote image URL to raw bytes (PNG/JPEG/GIF) for figma.createImage.
  */
 async function downloadUrlToBytes(url: string): Promise<Uint8Array> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Failed to download image (HTTP ${res.status})`);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Could not download image (HTTP ${res.status}).`);
+    }
+    const buf = await res.arrayBuffer();
+    return new Uint8Array(buf);
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('Could not download image')) {
+      throw e;
+    }
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(`Could not download image. Check your network. ${detail}`);
   }
-  const buf = await res.arrayBuffer();
-  return new Uint8Array(buf);
 }
 
 /**
@@ -271,12 +281,13 @@ figma.on('selectionchange', () => {
  * Each handler runs inside its own try/catch so one failure does not break the plugin.
  */
 figma.ui.onmessage = async (raw: unknown) => {
-  if (!raw || typeof raw !== 'object' || !('type' in raw) || typeof (raw as { type: unknown }).type !== 'string') {
-    return;
-  }
-  const msg = raw as PluginMessage;
+  try {
+    if (!raw || typeof raw !== 'object' || !('type' in raw) || typeof (raw as { type: unknown }).type !== 'string') {
+      return;
+    }
+    const msg = raw as PluginMessage;
 
-  switch (msg.type) {
+    switch (msg.type) {
     /**
      * LOAD_KEY
      * Store and retrieve the Bloom API key using figma.clientStorage.
@@ -369,8 +380,10 @@ figma.ui.onmessage = async (raw: unknown) => {
         placeNodeInTarget(rect, target);
         figma.currentPage.selection = [rect];
         figma.viewport.scrollAndZoomIntoView([rect]);
+        figma.ui.postMessage({ type: 'INSERT_SUCCESS' });
       } catch (e) {
-        postPluginError('INSERT_IMAGE', e);
+        const message = e instanceof Error ? e.message : String(e);
+        figma.ui.postMessage({ type: 'INSERT_ERROR', message });
       }
       break;
     }
@@ -405,8 +418,10 @@ figma.ui.onmessage = async (raw: unknown) => {
         }
         node.fills = fills;
         figma.currentPage.selection = [node as SceneNode];
+        figma.ui.postMessage({ type: 'REPLACE_SUCCESS' });
       } catch (e) {
-        postPluginError('REPLACE_IMAGE', e);
+        const message = e instanceof Error ? e.message : String(e);
+        figma.ui.postMessage({ type: 'INSERT_ERROR', message });
       }
       break;
     }
@@ -439,7 +454,8 @@ figma.ui.onmessage = async (raw: unknown) => {
         }
         figma.ui.postMessage({ type: 'BATCH_COMPLETE' });
       } catch (e) {
-        postPluginError('BATCH_INSERT', e);
+        const message = e instanceof Error ? e.message : String(e);
+        figma.ui.postMessage({ type: 'BATCH_ERROR', message });
       }
       break;
     }
@@ -455,37 +471,25 @@ figma.ui.onmessage = async (raw: unknown) => {
       try {
         const sel = figma.currentPage.selection;
         if (sel.length !== 1) {
-          figma.ui.postMessage({
-            type: 'SELECTED_IMAGE_URL',
-            dataUrl: null,
-            error: 'Select a single layer with an image fill',
-          });
+          figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
           break;
         }
         const node = sel[0];
         const hash = getFirstImageHash(node);
         if (!hash) {
-          figma.ui.postMessage({
-            type: 'SELECTED_IMAGE_URL',
-            dataUrl: null,
-            error: 'No image fill found on the selected layer',
-          });
+          figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
           break;
         }
         const image = figma.getImageByHash(hash);
         if (!image) {
-          figma.ui.postMessage({
-            type: 'SELECTED_IMAGE_URL',
-            dataUrl: null,
-            error: 'Could not resolve image from fill',
-          });
+          figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
           break;
         }
         const bytes = await image.getBytesAsync();
         const dataUrl = bytesToDataUrl(bytes);
         figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL', dataUrl });
-      } catch (e) {
-        postPluginError('GET_SELECTED_IMAGE_URL', e);
+      } catch (_e) {
+        figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
       }
       break;
     }
@@ -500,9 +504,18 @@ figma.ui.onmessage = async (raw: unknown) => {
       try {
         const bytes = await downloadUrlToBytes(msg.url);
         const dataUrl = bytesToDataUrl(bytes);
-        figma.ui.postMessage({ type: 'FETCH_IMAGE_DATA_RESULT', dataUrl });
+        figma.ui.postMessage({
+          type: 'IMAGE_DATA_RESULT',
+          dataUrl,
+          imageId: typeof msg.imageId === 'string' ? msg.imageId : undefined,
+        });
       } catch (e) {
-        postPluginError('FETCH_IMAGE_DATA', e);
+        const message = e instanceof Error ? e.message : String(e);
+        figma.ui.postMessage({
+          type: 'IMAGE_DATA_ERROR',
+          message,
+          imageId: typeof msg.imageId === 'string' ? msg.imageId : undefined,
+        });
       }
       break;
     }
@@ -527,5 +540,8 @@ figma.ui.onmessage = async (raw: unknown) => {
     default: {
       break;
     }
+    }
+  } catch (e) {
+    postPluginError('onmessage', e);
   }
 };

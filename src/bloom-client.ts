@@ -54,39 +54,40 @@ export async function bloomFetch<T>(
   apiKey: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const url = `${BLOOM_BASE}${normalizedPath}`;
-
-  const headers = new Headers(options.headers);
-  headers.set('x-api-key', apiKey);
-  if (options.body !== undefined && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  let res: Response;
   try {
-    res = await fetch(url, { ...options, headers });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`Bloom API request failed: ${msg}`);
-  }
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${BLOOM_BASE}${normalizedPath}`;
 
-  const text = await res.text();
-  let body: unknown = null;
-  if (text) {
-    try {
-      body = JSON.parse(text) as unknown;
-    } catch {
-      body = text;
+    const headers = new Headers(options.headers);
+    headers.set('x-api-key', apiKey);
+    if (options.body !== undefined && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
     }
-  }
 
-  if (!res.ok) {
-    const detail = extractErrorMessage(body) ?? (typeof body === 'string' ? body : res.statusText);
-    throw new Error(`Bloom API ${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`);
-  }
+    const res = await fetch(url, { ...options, headers });
+    const text = await res.text();
+    let body: unknown = null;
+    if (text) {
+      try {
+        body = JSON.parse(text) as unknown;
+      } catch {
+        body = text;
+      }
+    }
 
-  return body as T;
+    if (!res.ok) {
+      const detail = extractErrorMessage(body) ?? (typeof body === 'string' ? body : res.statusText);
+      throw new Error(`Bloom API ${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`);
+    }
+
+    return body as T;
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('Bloom API')) {
+      throw e;
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`We couldn't reach Bloom. Check your network and try again. ${msg}`);
+  }
 }
 
 // --- Brand functions ---
@@ -146,7 +147,11 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
   try {
     await bloomFetch<unknown>('/brands?limit=1', apiKey, { method: 'GET' });
     return true;
-  } catch {
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith("We couldn't reach Bloom")) {
+      throw new Error(msg);
+    }
     return false;
   }
 }
@@ -221,15 +226,37 @@ export async function getBrand(apiKey: string, brandId: string): Promise<BloomBr
 // --- Image functions ---
 
 function parseGenerationImageIds(body: unknown): string[] {
-  const data = unwrapData<Record<string, unknown>>(body);
-  const ids =
-    data.imageIds ??
-    data.image_ids ??
-    (Array.isArray(data.images) ? (data.images as unknown[]).map((x) => (x as { id?: string }).id) : undefined);
-  if (Array.isArray(ids)) {
-    return ids.filter((x): x is string => typeof x === 'string');
+  function collectIds(o: Record<string, unknown> | null): string[] {
+    if (!o || typeof o !== 'object') return [];
+    const ids =
+      o.imageIds ??
+      o.image_ids ??
+      o.generatedImageIds ??
+      o.generated_image_ids;
+    if (Array.isArray(ids)) {
+      return ids.filter((x): x is string => typeof x === 'string');
+    }
+    if (Array.isArray(o.images)) {
+      return (o.images as unknown[])
+        .map((x) => (x && typeof x === 'object' ? String((x as { id?: unknown }).id ?? '') : ''))
+        .filter((x) => x !== '');
+    }
+    if (typeof o.id === 'string' && o.id !== '') return [o.id];
+    return [];
   }
-  return [];
+  const root = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const data = unwrapData<unknown>(body);
+  if (Array.isArray(data)) {
+    const arrOut: string[] = [];
+    for (const el of data) {
+      if (typeof el === 'string' && el !== '') arrOut.push(el);
+      else if (el && typeof el === 'object' && 'id' in el) arrOut.push(String((el as { id: unknown }).id));
+    }
+    if (arrOut.length > 0) return arrOut;
+  }
+  const fromData = collectIds(data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null);
+  if (fromData.length > 0) return fromData;
+  return collectIds(root);
 }
 
 /**
@@ -257,8 +284,11 @@ export async function generateImages(
       body: JSON.stringify({
         prompt,
         brandSessionId,
+        brand_session_id: brandSessionId,
         aspectRatio,
+        aspect_ratio: aspectRatio,
         variantCount: clamped,
+        variant_count: clamped,
       }),
     }
   );
@@ -267,6 +297,25 @@ export async function generateImages(
     throw new Error('Bloom API: image generation returned no image IDs');
   }
   return ids;
+}
+
+/**
+ * Applies an edit instruction to an existing generated image.
+ */
+export async function editImage(apiKey: string, imageId: string, instruction: string): Promise<string[]> {
+  const raw = await bloomFetch<unknown>(
+    `/images/${encodeURIComponent(imageId)}/edit`,
+    apiKey,
+    {
+      method: 'POST',
+      body: JSON.stringify({ instruction }),
+    }
+  );
+  const ids = parseGenerationImageIds(raw);
+  if (ids.length > 0) return ids;
+  const d = unwrapData<Record<string, unknown>>(raw);
+  if (d && typeof d.id === 'string' && d.id) return [d.id];
+  throw new Error('Bloom API: edit returned no image IDs');
 }
 
 function parseImagesList(body: unknown): BloomImage[] {
