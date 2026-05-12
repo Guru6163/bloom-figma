@@ -1,0 +1,16 @@
+{
+  "name": "Bloom – On-Brand Image Generator",
+  "id": "1634437000763292649",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "documentAccess": "dynamic-page",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://www.trybloom.ai",
+      "https://storage.trybloom.ai"
+    ],
+    "reasoning": "Bloom API for image generation and brand management"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES6",
+    "lib": ["ES6", "DOM"],
+    "strict": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "typeRoots": ["./node_modules/@types", "./node_modules/@figma"],
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*"]
+}
