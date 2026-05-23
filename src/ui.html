@@ -311,7 +311,8 @@
     function extractErrorMessage(body) {
       if (!body || typeof body !== 'object') return undefined;
       var o = body;
-      var err = o.error != null ? o.error : o.message != null ? o.message : o.detail;
+      if (typeof o.message === 'string') return o.message;
+      var err = o.error != null ? o.error : o.detail;
       if (typeof err === 'string') return err;
       if (err && typeof err === 'object' && typeof err.message === 'string') return err.message;
       return undefined;
@@ -365,8 +366,7 @@
      */
     function validateApiKey(apiKey) {
       return bloomFetch('/brands?limit=1', apiKey, { method: 'GET' })
-        .then(function (raw) {
-          parseBrandsListEnvelopeUi(raw);
+        .then(function () {
           return true;
         })
         .catch(function (e) {
@@ -379,228 +379,33 @@
     }
 
     /**
-     * @param {unknown} v Wire value.
-     * @returns {boolean} True if `v` is a non-null, non-array object.
-     */
-    function isRecord(v) {
-      return v !== null && typeof v === 'object' && !Array.isArray(v);
-    }
-
-    /**
-     * Requires a Bloom `{ data: object }` envelope and returns `data`.
-     * @param {unknown} body Parsed JSON root.
-     * @param {string} ctx Label for thrown errors.
-     * @returns {Record<string, unknown>} The `data` object.
-     */
-    function requireBloomDataUi(body, ctx) {
-      if (!isRecord(body) || !('data' in body)) {
-        throw new Error('Bloom API (' + ctx + '): response must be a JSON object with a data property');
-      }
-      var inner = body.data;
-      if (!isRecord(inner)) {
-        throw new Error('Bloom API (' + ctx + '): data must be an object');
-      }
-      return inner;
-    }
-
-    var _BRAND_ST_UI = ['analyzing', 'ready', 'logo_required', 'failed'];
-
-    /**
-     * Parses one brand row from GET /brands `data.brands`.
-     * @param {unknown} raw Brand JSON object.
-     * @param {string} ctx Parser label.
-     * @param {number} index Index in `brands` array.
-     */
-    function parseBrandListItemUi(raw, ctx, index) {
-      if (!isRecord(raw)) {
-        throw new Error('Bloom API (' + ctx + '): brands[' + index + '] must be an object');
-      }
-      var id = raw.id;
-      var name = raw.name;
-      var url = raw.url;
-      var status = raw.status;
-      if (typeof id !== 'string' || id.length === 0) {
-        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].id must be a non-empty string');
-      }
-      if (typeof name !== 'string') {
-        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].name must be a string');
-      }
-      if (typeof url !== 'string') {
-        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].url must be a string');
-      }
-      if (typeof status !== 'string' || _BRAND_ST_UI.indexOf(status) === -1) {
-        throw new Error('Bloom API (' + ctx + '): brands[' + index + '].status invalid');
-      }
-      var out = { id: id, name: name, url: url, status: status };
-      if (typeof raw.imageCount === 'number' && isFinite(raw.imageCount)) out.imageCount = raw.imageCount;
-      if (typeof raw.workspaceId === 'string') out.workspaceId = raw.workspaceId;
-      if (typeof raw.workspaceName === 'string') out.workspaceName = raw.workspaceName;
-      if (typeof raw.createdAt === 'string') out.createdAt = raw.createdAt;
-      return out;
-    }
-
-    /**
-     * Parses GET /brands list envelope (`brands`, `hasMore`, `nextCursor`).
-     * @param {unknown} body Parsed JSON root.
-     * @param {string} [ctx] Parser label.
-     */
-    function parseBrandsListEnvelopeUi(body, ctx) {
-      if (ctx === void 0) ctx = 'GET /brands';
-      var d = requireBloomDataUi(body, ctx);
-      if (!Array.isArray(d.brands)) {
-        throw new Error('Bloom API (' + ctx + '): data.brands must be an array');
-      }
-      if (typeof d.hasMore !== 'boolean') {
-        throw new Error('Bloom API (' + ctx + '): data.hasMore must be a boolean');
-      }
-      var nc = d.nextCursor;
-      if (!(typeof nc === 'string' || nc === null)) {
-        throw new Error('Bloom API (' + ctx + '): data.nextCursor must be string or null');
-      }
-      var brands = d.brands.map(function (item, i) {
-        return parseBrandListItemUi(item, ctx, i);
-      });
-      return { brands: brands, nextCursor: nc, hasMore: d.hasMore };
-    }
-
-    /** POST /brands — data envelope (OpenAPI) */
-    function parseOnboardBrandEnvelopeUi(body, ctx) {
-      if (ctx === void 0) ctx = 'POST /brands';
-      var d = requireBloomDataUi(body, ctx);
-      if (typeof d.id !== 'string' || d.id.length === 0) {
-        throw new Error('Bloom API (' + ctx + '): data.id must be a non-empty string');
-      }
-      if (typeof d.status !== 'string' || _BRAND_ST_UI.indexOf(d.status) === -1) {
-        throw new Error('Bloom API (' + ctx + '): data.status invalid');
-      }
-      var out = { id: d.id, status: d.status };
-      if ('logoError' in d) {
-        var le = d.logoError;
-        if (le !== null && le !== undefined && typeof le !== 'string') {
-          throw new Error('Bloom API (' + ctx + '): data.logoError must be string or null');
-        }
-        if (typeof le === 'string') out.logoError = le;
-        else if (le === null) out.logoError = null;
-      }
-      return out;
-    }
-
-    /** GET /brands/{id} — data envelope (OpenAPI) */
-    function parseBrandDetailEnvelopeUi(body, ctx) {
-      if (ctx === void 0) ctx = 'GET /brands/{id}';
-      var d = requireBloomDataUi(body, ctx);
-      var base = parseBrandListItemUi(d, ctx, 0);
-      var out = Object.assign({}, base);
-      if ('logoUrl' in d) {
-        var lv = d.logoUrl;
-        if (lv !== null && lv !== undefined && typeof lv !== 'string') {
-          throw new Error('Bloom API (' + ctx + '): data.logoUrl must be string or null');
-        }
-        if (typeof lv === 'string') out.logoUrl = lv;
-        else if (lv === null) out.logoUrl = null;
-      }
-      if ('logoError' in d) {
-        var le = d.logoError;
-        if (le !== null && le !== undefined && typeof le !== 'string') {
-          throw new Error('Bloom API (' + ctx + '): data.logoError must be string or null');
-        }
-        if (typeof le === 'string') out.logoError = le;
-        else if (le === null) out.logoError = null;
-      }
-      if (Array.isArray(d.colors)) {
-        out.colors = d.colors.filter(function (x) {
-          return typeof x === 'string';
-        });
-      }
-      if (Array.isArray(d.fonts)) {
-        out.fonts = d.fonts.filter(function (x) {
-          return typeof x === 'string';
-        });
-      }
-      if (typeof d.aesthetic === 'string') out.aesthetic = d.aesthetic;
-      else if (d.aesthetic === null) out.aesthetic = null;
-      if (typeof d.summary === 'string') out.summary = d.summary;
-      return out;
-    }
-
-    /**
-     * Parses GET /credits envelope (`balance`, `unlimited`).
-     * @param {unknown} body Parsed JSON root.
-     * @param {string} [ctx] Parser label.
-     */
-    function parseCreditsEnvelopeUi(body, ctx) {
-      if (ctx === void 0) ctx = 'GET /credits';
-      var d = requireBloomDataUi(body, ctx);
-      if (typeof d.unlimited !== 'boolean') {
-        throw new Error('Bloom API (' + ctx + '): data.unlimited must be a boolean');
-      }
-      if (d.unlimited) {
-        var b = d.balance;
-        var balance = typeof b === 'number' && isFinite(b) ? b : 0;
-        return { balance: balance, unlimited: true };
-      }
-      var balance = d.balance;
-      if (typeof balance !== 'number' || !isFinite(balance)) {
-        throw new Error('Bloom API (' + ctx + '): data.balance must be a finite number when unlimited is false');
-      }
-      return { balance: balance, unlimited: false };
-    }
-
-    /**
-     * Reads an optional string property from a record.
-     * @param {Record<string, unknown>} r Object.
-     * @param {string} key Property name.
-     * @returns {string|undefined} Trimmed string or undefined when absent/null.
-     */
-    function optString(r, key) {
-      var x = r[key];
-      if (x === undefined || x === null) return undefined;
-      return String(x);
-    }
-
-    /**
-     * Reads an optional string array property, keeping only string elements.
-     * @param {Record<string, unknown>} r Object.
-     * @param {string} key Property name.
-     * @returns {string[]|undefined} Filtered array or undefined.
-     */
-    function stringArrayField(r, key) {
-      var v = r[key];
-      if (!Array.isArray(v)) return undefined;
-      return v.filter(function (x) {
-        return typeof x === 'string';
-      });
-    }
-
-    /**
-     * Maps a raw brand API row to the UI's normalized brand object (includes `brandSessionId`).
-     * @param {unknown} raw Brand detail or list item.
+     * Maps a brand API row to the UI's normalized brand object (includes `brandSessionId`).
+     * Shapes match bloom-api-schema.ts (OpenAPI 3.1.1).
+     * @param {object} raw Brand detail or list item from `{ data }`.
      * @returns {object} Normalized brand fields for cards and session.
      */
     function normalizeBrand(raw) {
-      var r = isRecord(raw) ? raw : {};
-      var id = String(r.id != null ? r.id : '');
-      var ic = r.imageCount;
+      var id = String(raw.id != null ? raw.id : '');
       return {
         id: id,
-        name: String(r.name != null ? r.name : ''),
-        url: String(r.url != null ? r.url : ''),
-        status: r.status,
+        name: String(raw.name != null ? raw.name : ''),
+        url: String(raw.url != null ? raw.url : ''),
+        status: raw.status,
         brandSessionId: id || undefined,
-        logoUrl: optString(r, 'logoUrl'),
-        logoError: optString(r, 'logoError'),
-        imageCount: typeof ic === 'number' && isFinite(ic) ? ic : undefined,
-        workspaceId: optString(r, 'workspaceId'),
-        workspaceName: optString(r, 'workspaceName'),
-        createdAt: optString(r, 'createdAt'),
-        colors: stringArrayField(r, 'colors'),
-        fonts: stringArrayField(r, 'fonts'),
-        aesthetic: optString(r, 'aesthetic'),
-        summary: optString(r, 'summary'),
+        logoUrl: raw.logoUrl != null ? String(raw.logoUrl) : undefined,
+        logoError: raw.logoError != null ? String(raw.logoError) : undefined,
+        imageCount: typeof raw.imageCount === 'number' && isFinite(raw.imageCount) ? raw.imageCount : undefined,
+        workspaceId: raw.workspaceId != null ? String(raw.workspaceId) : undefined,
+        workspaceName: raw.workspaceName != null ? String(raw.workspaceName) : undefined,
+        createdAt: raw.createdAt != null ? String(raw.createdAt) : undefined,
+        colors: Array.isArray(raw.colors) ? raw.colors : undefined,
+        fonts: Array.isArray(raw.fonts) ? raw.fonts : undefined,
+        aesthetic: raw.aesthetic != null ? String(raw.aesthetic) : undefined,
+        summary: raw.summary != null ? String(raw.summary) : undefined,
       };
     }
 
-    /** GET /brands — strict OpenAPI envelope (see bloom-api-schema.ts) */
+    /** GET /brands — typed envelope (see bloom-api-schema.ts) */
     function listBrands(apiKey) {
       var out = [];
       var cursor = undefined;
@@ -613,7 +418,7 @@
         qs.set('limit', '100');
         if (cursor) qs.set('cursor', cursor);
         return bloomFetch('/brands?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
-          var page = parseBrandsListEnvelopeUi(raw);
+          var page = raw.data;
           var brands = page.brands;
           var nextCursor = page.nextCursor;
           var hasMore = page.hasMore;
@@ -639,7 +444,7 @@
         method: 'POST',
         body: JSON.stringify({ url: url }),
       }).then(function (raw) {
-        var d = parseOnboardBrandEnvelopeUi(raw);
+        var d = raw.data;
         var row = {
           id: d.id,
           name: '',
@@ -655,57 +460,8 @@
     /** GET /brands/{id} — { data: { … } } */
     function getBrand(apiKey, brandId) {
       return bloomFetch('/brands/' + encodeURIComponent(brandId), apiKey, { method: 'GET' }).then(function (raw) {
-        var detail = parseBrandDetailEnvelopeUi(raw);
-        return normalizeBrand(detail);
+        return normalizeBrand(raw.data);
       });
-    }
-
-    /**
-     * Parses POST /images/generations accepted envelope (`ids`, `variantGroupId`, `status`).
-     * @param {unknown} raw Parsed JSON root.
-     * @param {string} [ctx] Parser label.
-     */
-    function parseGenerationAcceptedUi(raw, ctx) {
-      if (ctx === void 0) ctx = 'POST /images/generations';
-      var d = requireBloomDataUi(raw, ctx);
-      var idsRaw = d.ids;
-      if (!Array.isArray(idsRaw) || idsRaw.length === 0) {
-        throw new Error('Bloom API (' + ctx + '): data.ids must be a non-empty array');
-      }
-      var ids = idsRaw.map(function (x, i) {
-        if (typeof x !== 'string' || x.length === 0) {
-          throw new Error('Bloom API (' + ctx + '): data.ids[' + i + '] must be a non-empty string');
-        }
-        return x;
-      });
-      if (!('variantGroupId' in d)) {
-        throw new Error('Bloom API (' + ctx + '): data.variantGroupId is required');
-      }
-      var vgid = d.variantGroupId;
-      if (vgid !== null && (typeof vgid !== 'string' || vgid.length === 0)) {
-        throw new Error('Bloom API (' + ctx + '): data.variantGroupId must be uuid string or null');
-      }
-      if (d.status !== 'pending') {
-        throw new Error('Bloom API (' + ctx + '): data.status must be "pending"');
-      }
-      return { ids: ids, variantGroupId: vgid, status: 'pending' };
-    }
-
-    /**
-     * Parses POST /images/{id}/edit accepted envelope (`id`, `status`).
-     * @param {unknown} raw Parsed JSON root.
-     * @param {string} [ctx] Parser label.
-     */
-    function parseEditAcceptedUi(raw, ctx) {
-      if (ctx === void 0) ctx = 'POST /images/{id}/edit';
-      var d = requireBloomDataUi(raw, ctx);
-      if (typeof d.id !== 'string' || d.id.length === 0) {
-        throw new Error('Bloom API (' + ctx + '): data.id must be a non-empty string');
-      }
-      if (d.status !== 'pending') {
-        throw new Error('Bloom API (' + ctx + '): data.status must be "pending"');
-      }
-      return { id: d.id, status: 'pending' };
     }
 
     /**
@@ -728,8 +484,7 @@
           variantCount: clamped,
         }),
       }).then(function (raw) {
-        var gen = parseGenerationAcceptedUi(raw);
-        return gen.ids;
+        return raw.data.ids;
       });
     }
 
@@ -749,178 +504,17 @@
           prompt: instruction,
         }),
       }).then(function (raw) {
-        var ed = parseEditAcceptedUi(raw);
-        return [ed.id];
+        return [raw.data.id];
       });
     }
 
-    var _LIST_IMG_KEYS_UI = [
-      'id',
-      'source',
-      'prompt',
-      'description',
-      'aspectRatio',
-      'width',
-      'height',
-      'actionType',
-      'variantGroupId',
-      'status',
-      'workspaceId',
-      'workspaceName',
-      'createdAt',
-    ];
-    var _IMG_SRC_UI = ['generated', 'uploaded', 'scraped'];
-    var _IMG_ACT_UI = ['generation', 'edit', 'resize', 'variant', 'recreate'];
-    var _IMG_ST_UI = ['pending', 'generating', 'completed', 'failed'];
-    var _ASP_UI = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
-
     /**
-     * Parses a nullable string field on an image list row (strict).
-     * @param {unknown} v Raw value.
-     * @param {string} loc Location label for errors.
-     * @param {string} ctx Parser context.
-     */
-    function _strOrNullUi(v, loc, ctx) {
-      if (v === null) return null;
-      if (typeof v !== 'string') {
-        throw new Error('Bloom API (' + ctx + '): ' + loc + ' must be string or null');
-      }
-      return v;
-    }
-
-    /**
-     * Parses a nullable finite number on an image list row.
-     * @param {unknown} v Raw value.
-     * @param {string} loc Location label for errors.
-     * @param {string} ctx Parser context.
-     */
-    function _numOrNullUi(v, loc, ctx) {
-      if (v === null) return null;
-      if (typeof v !== 'number' || !isFinite(v)) {
-        throw new Error('Bloom API (' + ctx + '): ' + loc + ' must be number or null');
-      }
-      return v;
-    }
-
-    /**
-     * Parses a nullable supported aspect ratio on an image list row.
-     * @param {unknown} v Raw value.
-     * @param {string} loc Location label for errors.
-     * @param {string} ctx Parser context.
-     */
-    function _aspOrNullUi(v, loc, ctx) {
-      if (v === null) return null;
-      if (typeof v !== 'string' || _ASP_UI.indexOf(v) === -1) {
-        throw new Error('Bloom API (' + ctx + '): ' + loc + ' invalid aspect ratio');
-      }
-      return v;
-    }
-
-    /**
-     * Parses one `data.images[]` element from GET /images (OpenAPI required keys).
-     * @param {unknown} raw Row JSON.
-     * @param {string} ctx Parser label.
-     * @param {number} index Row index.
-     */
-    function parseImageListItemUi(raw, ctx, index) {
-      if (!isRecord(raw)) {
-        throw new Error('Bloom API (' + ctx + '): images[' + index + '] must be an object');
-      }
-      for (var ki = 0; ki < _LIST_IMG_KEYS_UI.length; ki++) {
-        if (!(_LIST_IMG_KEYS_UI[ki] in raw)) {
-          throw new Error('Bloom API (' + ctx + '): images[' + index + '] missing ' + _LIST_IMG_KEYS_UI[ki]);
-        }
-      }
-      if (typeof raw.id !== 'string' || raw.id.length === 0) {
-        throw new Error('Bloom API (' + ctx + '): images[' + index + '].id invalid');
-      }
-      if (typeof raw.source !== 'string' || _IMG_SRC_UI.indexOf(raw.source) === -1) {
-        throw new Error('Bloom API (' + ctx + '): images[' + index + '].source invalid');
-      }
-      var workspaceName = raw.workspaceName;
-      if (typeof workspaceName !== 'string') {
-        throw new Error('Bloom API (' + ctx + '): images[' + index + '].workspaceName must be a string');
-      }
-      var createdAt = raw.createdAt;
-      if (typeof createdAt !== 'string') {
-        throw new Error('Bloom API (' + ctx + '): images[' + index + '].createdAt must be a string');
-      }
-      var actionType = raw.actionType;
-      if (actionType !== null && (typeof actionType !== 'string' || _IMG_ACT_UI.indexOf(actionType) === -1)) {
-        throw new Error('Bloom API (' + ctx + '): images[' + index + '].actionType invalid');
-      }
-      var status = raw.status;
-      if (status !== null && (typeof status !== 'string' || _IMG_ST_UI.indexOf(status) === -1)) {
-        throw new Error('Bloom API (' + ctx + '): images[' + index + '].status invalid');
-      }
-      var row = {
-        id: raw.id,
-        source: raw.source,
-        prompt: _strOrNullUi(raw.prompt, 'images[' + index + '].prompt', ctx),
-        description: _strOrNullUi(raw.description, 'images[' + index + '].description', ctx),
-        aspectRatio: _aspOrNullUi(raw.aspectRatio, 'images[' + index + '].aspectRatio', ctx),
-        width: _numOrNullUi(raw.width, 'images[' + index + '].width', ctx),
-        height: _numOrNullUi(raw.height, 'images[' + index + '].height', ctx),
-        actionType: actionType,
-        variantGroupId:
-          raw.variantGroupId === null || typeof raw.variantGroupId === 'string'
-            ? raw.variantGroupId
-            : (function () {
-                throw new Error('Bloom API (' + ctx + '): images[' + index + '].variantGroupId invalid');
-              })(),
-        status: status,
-        workspaceId: _strOrNullUi(raw.workspaceId, 'images[' + index + '].workspaceId', ctx),
-        workspaceName: workspaceName,
-        createdAt: createdAt,
-      };
-      if ('brandSessionId' in raw && raw.brandSessionId != null) {
-        if (typeof raw.brandSessionId !== 'string') {
-          throw new Error('Bloom API (' + ctx + '): images[' + index + '].brandSessionId invalid');
-        }
-        row.brandSessionId = raw.brandSessionId;
-      }
-      if ('imageUrl' in raw) {
-        var u = raw.imageUrl;
-        if (u !== null && u !== undefined && typeof u !== 'string') {
-          throw new Error('Bloom API (' + ctx + '): images[' + index + '].imageUrl invalid');
-        }
-        row.imageUrl = u;
-      }
-      return row;
-    }
-
-    /**
-     * Parses GET /images list envelope (`images`, `hasMore`, `nextCursor`).
-     * @param {unknown} body Parsed JSON root.
-     * @param {string} [ctx] Parser label.
-     */
-    function parseImagesListEnvelopeUi(body, ctx) {
-      if (ctx === void 0) ctx = 'GET /images';
-      var d = requireBloomDataUi(body, ctx);
-      if (!Array.isArray(d.images)) {
-        throw new Error('Bloom API (' + ctx + '): data.images must be an array');
-      }
-      if (typeof d.hasMore !== 'boolean') {
-        throw new Error('Bloom API (' + ctx + '): data.hasMore must be a boolean');
-      }
-      var nc = d.nextCursor;
-      if (!(typeof nc === 'string' || nc === null)) {
-        throw new Error('Bloom API (' + ctx + '): data.nextCursor must be string or null');
-      }
-      var images = d.images.map(function (item, i) {
-        return parseImageListItemUi(item, ctx, i);
-      });
-      return { images: images, nextCursor: nc, hasMore: d.hasMore };
-    }
-
-    /**
-     * Maps strict list rows to lightweight objects used by polling (`status`, resolved `imageUrl`).
-     * @param {unknown} body Parsed GET /images JSON root.
+     * Maps image list rows to lightweight objects used by polling (`status`, resolved `imageUrl`).
+     * @param {object} body Parsed GET /images JSON root `{ data: { images } }`.
      * @returns {object[]} Simplified rows for progress UI.
      */
-    function parseImagesList(body) {
-      var page = parseImagesListEnvelopeUi(body);
-      return page.images.map(function (row) {
+    function mapImagesForPolling(body) {
+      return body.data.images.map(function (row) {
         var st = row.status == null ? 'pending' : row.status;
         var rawUrl = row.imageUrl;
         var imageUrl =
@@ -945,13 +539,13 @@
         qs.set('cursor', String(cursorForRequest).trim());
       }
       return bloomFetch('/images?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
-        return parseImagesListEnvelopeUi(raw);
+        return raw.data;
       });
     }
 
     /**
      * Maps a full image list row to a library grid item (insert prompt + ratio).
-     * @param {object} row Parsed list row from `parseImagesListEnvelopeUi`.
+     * @param {object} row Image list row from GET /images `data.images[]`.
      * @returns {{ id: string, imageUrl: string, aspectRatio: string, insertPrompt: string }} Library cell model.
      */
     function mapListRowToLibraryItem(row) {
@@ -1011,7 +605,7 @@
           qs.set('brandSessionId', String(brandSessionId).trim());
         }
         return bloomFetch('/images?' + qs.toString(), apiKey, { method: 'GET' }).then(function (raw) {
-          lastImages = parseImagesList(raw);
+          lastImages = mapImagesForPolling(raw);
           var byId = {};
           for (var k = 0; k < lastImages.length; k++) {
             var row = lastImages[k];
@@ -1059,7 +653,7 @@
      */
     function getCredits(apiKey) {
       return bloomFetch('/credits', apiKey, { method: 'GET' }).then(function (raw) {
-        var credits = parseCreditsEnvelopeUi(raw);
+        var credits = raw.data;
         if (credits.unlimited) {
           return Number.MAX_SAFE_INTEGER;
         }

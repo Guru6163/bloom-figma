@@ -1,19 +1,11 @@
 /**
  * @file Bloom REST API client for the typed reference implementation (not bundled into
  * the default UI build; keep in sync with the inlined client in `ui.html`).
- * Success JSON is validated against OpenAPI 3.1.1 shapes in `bloom-api-schema.ts`.
- * https://www.trybloom.ai/api/v1/docs
+ * https://www.trybloom.ai/api/v1/spec.json
  */
 
 import {
   extractBloomErrorMessage,
-  parseBrandDetailEnvelope,
-  parseBrandsListEnvelope,
-  parseCreditsEnvelope,
-  parseEditAcceptedEnvelope,
-  parseGenerationAcceptedEnvelope,
-  parseImagesListEnvelope,
-  parseOnboardBrandEnvelope,
   toBloomBrand,
   effectiveImageGenStatus,
   type BloomBrand,
@@ -22,6 +14,14 @@ import {
   type BloomImageGenStatus,
   type BloomImageSource,
   type BloomImageActionType,
+  type BloomAspectRatio,
+  type BloomSuccessEnvelope,
+  type BloomBrandsListData,
+  type BloomBrandDetailData,
+  type BloomOnboardBrandData,
+  type BloomGenerationAcceptedData,
+  type BloomImageMutationAcceptedData,
+  type BloomCreditsData,
 } from './bloom-api-schema';
 
 export type {
@@ -34,18 +34,21 @@ export type {
   BloomImageActionType,
   BloomImageGenStatus,
   BloomImagesListData,
+  BloomAccountData,
+  BloomCreditsData,
+  BloomWorkspacesListData,
+  BloomImageSearchData,
+  BloomImageUploadData,
 } from './bloom-api-schema';
 
-export { parseGetImageEnvelope, BloomApiParseError } from './bloom-api-schema';
+export { effectiveImageGenStatus, extractBloomErrorMessage } from './bloom-api-schema';
 
 const BLOOM_BASE = 'https://www.trybloom.ai/api/v1';
 
 /**
- * Parses JSON for a successful (2xx) Bloom HTTP response.
- * On success returns `unknown` only at the wire boundary — callers must pass
- * the value through a `parse*Envelope` function in `bloom-api-schema.ts`.
+ * Parses JSON for a successful (2xx) Bloom HTTP response into the expected type.
  */
-async function bloomFetchOkJson(path: string, apiKey: string, options: RequestInit = {}): Promise<unknown> {
+async function bloomFetch<T>(path: string, apiKey: string, options: RequestInit = {}): Promise<T> {
   try {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${BLOOM_BASE}${normalizedPath}`;
@@ -72,7 +75,7 @@ async function bloomFetchOkJson(path: string, apiKey: string, options: RequestIn
       throw new Error(`Bloom API ${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`);
     }
 
-    return body;
+    return body as T;
   } catch (e) {
     if (e instanceof Error && e.message.startsWith('Bloom API')) {
       throw e;
@@ -84,19 +87,17 @@ async function bloomFetchOkJson(path: string, apiKey: string, options: RequestIn
 
 /**
  * Returns true when polling can stop for this image (`completed` or `failed`).
- * @param s Effective generation status string.
  */
 function isTerminalGenStatus(s: ReturnType<typeof effectiveImageGenStatus>): boolean {
   return s === 'completed' || s === 'failed';
 }
 
 /**
- * Validates an API key by attempting to list brands and verifying the response envelope.
+ * Validates an API key by attempting to list brands.
  */
 export async function validateApiKey(apiKey: string): Promise<boolean> {
   try {
-    const body = await bloomFetchOkJson('/brands?limit=1', apiKey, { method: 'GET' });
-    parseBrandsListEnvelope(body);
+    await bloomFetch<BloomSuccessEnvelope<BloomBrandsListData>>('/brands?limit=1', apiKey, { method: 'GET' });
     return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -119,8 +120,11 @@ export async function listBrands(apiKey: string): Promise<BloomBrand[]> {
     qs.set('limit', '100');
     if (cursor) qs.set('cursor', cursor);
 
-    const body = await bloomFetchOkJson(`/brands?${qs.toString()}`, apiKey, { method: 'GET' });
-    const page = parseBrandsListEnvelope(body);
+    const { data: page } = await bloomFetch<BloomSuccessEnvelope<BloomBrandsListData>>(
+      `/brands?${qs.toString()}`,
+      apiKey,
+      { method: 'GET' }
+    );
     for (const item of page.brands) {
       out.push(toBloomBrand(item));
     }
@@ -137,16 +141,19 @@ export async function listBrands(apiKey: string): Promise<BloomBrand[]> {
  * POST /brands — returns 202; `data` contains id, status, optional logoError.
  */
 export async function onboardBrand(apiKey: string, url: string): Promise<BloomBrand> {
-  const body = await bloomFetchOkJson('/brands', apiKey, {
+  const { data: d } = await bloomFetch<BloomSuccessEnvelope<BloomOnboardBrandData>>('/brands', apiKey, {
     method: 'POST',
     body: JSON.stringify({ url }),
   });
-  const d = parseOnboardBrandEnvelope(body);
   return toBloomBrand({
     id: d.id,
     name: '',
     url,
     status: d.status,
+    imageCount: 0,
+    workspaceId: null,
+    workspaceName: '',
+    createdAt: new Date().toISOString(),
     logoError: d.logoError,
   });
 }
@@ -155,8 +162,11 @@ export async function onboardBrand(apiKey: string, url: string): Promise<BloomBr
  * GET /brands/{id}
  */
 export async function getBrand(apiKey: string, brandId: string): Promise<BloomBrand> {
-  const body = await bloomFetchOkJson(`/brands/${encodeURIComponent(brandId)}`, apiKey, { method: 'GET' });
-  const detail = parseBrandDetailEnvelope(body);
+  const { data: detail } = await bloomFetch<BloomSuccessEnvelope<BloomBrandDetailData>>(
+    `/brands/${encodeURIComponent(brandId)}`,
+    apiKey,
+    { method: 'GET' }
+  );
   return toBloomBrand(detail);
 }
 
@@ -167,20 +177,23 @@ export async function generateImages(
   apiKey: string,
   brandSessionId: string,
   prompt: string,
-  aspectRatio: string,
+  aspectRatio: BloomAspectRatio,
   variantCount: number
 ): Promise<string[]> {
   const clamped = Math.min(5, Math.max(1, Math.floor(variantCount)));
-  const body = await bloomFetchOkJson('/images/generations', apiKey, {
-    method: 'POST',
-    body: JSON.stringify({
-      prompt,
-      brandSessionId,
-      aspectRatio,
-      variantCount: clamped,
-    }),
-  });
-  const accepted = parseGenerationAcceptedEnvelope(body);
+  const { data: accepted } = await bloomFetch<BloomSuccessEnvelope<BloomGenerationAcceptedData>>(
+    '/images/generations',
+    apiKey,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt,
+        brandSessionId,
+        aspectRatio,
+        variantCount: clamped,
+      }),
+    }
+  );
   return accepted.ids;
 }
 
@@ -193,14 +206,17 @@ export async function editImage(
   imageId: string,
   prompt: string
 ): Promise<string[]> {
-  const body = await bloomFetchOkJson(`/images/${encodeURIComponent(imageId)}/edit`, apiKey, {
-    method: 'POST',
-    body: JSON.stringify({
-      brandSessionId,
-      prompt,
-    }),
-  });
-  const accepted = parseEditAcceptedEnvelope(body);
+  const { data: accepted } = await bloomFetch<BloomSuccessEnvelope<BloomImageMutationAcceptedData>>(
+    `/images/${encodeURIComponent(imageId)}/edit`,
+    apiKey,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        brandSessionId,
+        prompt,
+      }),
+    }
+  );
   return [accepted.id];
 }
 
@@ -250,8 +266,12 @@ export async function listImages(apiKey: string, query: ListImagesQuery = {}): P
     qs.set('timeout', String(Math.min(295, Math.max(1, Math.floor(query.timeout)))));
   }
 
-  const body = await bloomFetchOkJson(`/images?${qs.toString()}`, apiKey, { method: 'GET' });
-  return parseImagesListEnvelope(body);
+  const { data } = await bloomFetch<BloomSuccessEnvelope<BloomImagesListData>>(
+    `/images?${qs.toString()}`,
+    apiKey,
+    { method: 'GET' }
+  );
+  return data;
 }
 
 /**
@@ -284,8 +304,11 @@ export async function pollImages(
     const bs = String(brandSessionId || '').trim();
     if (bs) qs.set('brandSessionId', bs);
 
-    const body = await bloomFetchOkJson(`/images?${qs.toString()}`, apiKey, { method: 'GET' });
-    const list = parseImagesListEnvelope(body);
+    const { data: list } = await bloomFetch<BloomSuccessEnvelope<BloomImagesListData>>(
+      `/images?${qs.toString()}`,
+      apiKey,
+      { method: 'GET' }
+    );
     lastImages = list.images;
 
     const byId = new Map(
@@ -328,8 +351,9 @@ export async function pollImages(
  * GET /credits — returns numeric balance; unlimited accounts return `Number.MAX_SAFE_INTEGER`.
  */
 export async function getCredits(apiKey: string): Promise<number> {
-  const body = await bloomFetchOkJson('/credits', apiKey, { method: 'GET' });
-  const credits = parseCreditsEnvelope(body);
+  const { data: credits } = await bloomFetch<BloomSuccessEnvelope<BloomCreditsData>>('/credits', apiKey, {
+    method: 'GET',
+  });
   if (credits.unlimited) {
     return Number.MAX_SAFE_INTEGER;
   }
