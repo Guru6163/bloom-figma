@@ -797,27 +797,226 @@ function updateZoomNavState(): void {
 // postMessage handler (code.ts → UI)
 // =============================================================================
 
+// ---------------------------------------------------------------------------
+// Individual message handlers — one function per message type.
+// Each handler receives the full raw message object and mutates state / DOM.
+// ---------------------------------------------------------------------------
+
 /**
- * Handles all messages sent from the Figma main thread (code.ts).
+ * KEY_LOADED — Restores a saved API key from clientStorage.
+ * Populates the input field, then validates the key:
+ *   valid   → navigate to brand-select
+ *   invalid → stay on setup with an inline error
+ *   network → stay on setup with a network error
+ */
+function handleKeyLoaded(msg: Record<string, unknown>): void {
+  const input = document.getElementById('api-key-input') as HTMLInputElement | null;
+  const key = msg.key != null ? String(msg.key) : '';
+  if (input) input.value = key;
+  if (!key) { showView('setup'); return; }
+
+  setConnectLoading(true);
+  validateApiKey(key)
+    .then((ok) => {
+      setConnectLoading(false);
+      showView(ok ? 'brand-select' : 'setup');
+      if (!ok) setApiKeyError('Saved API key is no longer valid. Enter a new key.');
+    })
+    .catch((err: unknown) => {
+      setConnectLoading(false);
+      showView('setup');
+      const em = err instanceof Error ? err.message : String(err);
+      setApiKeyError(
+        em.includes("We couldn't reach Bloom")
+          ? em
+          : 'Could not validate saved key. Check your network.',
+      );
+    });
+}
+
+/**
+ * BRAND_LOADED — Restores the persisted brand selection from clientStorage.
+ * If the brand-select view is already open, highlights the matching card immediately.
+ */
+function handleBrandLoaded(msg: Record<string, unknown>): void {
+  state.savedBrandId = msg.brandId != null ? String(msg.brandId) : null;
+  if (state.currentViewId !== 'brand-select' || !state.savedBrandId || state.selectedBrandId) return;
+
+  const listEl = document.getElementById('brand-list');
+  if (!listEl) return;
+  const card = Array.from(listEl.querySelectorAll('.brand-card')).find(
+    (c) => c.getAttribute('data-brand-id') === state.savedBrandId,
+  );
+  if (card) {
+    state.selectedBrandId = state.savedBrandId;
+    syncBrandSelectionUi();
+  }
+}
+
+/**
+ * FRAME_SELECTED — A single frame-like node is selected on the canvas.
+ * Stores dimensions and name; disables replace and batch modes.
+ */
+function handleFrameSelected(msg: Record<string, unknown>): void {
+  state.frameWidth = typeof msg.width === 'number' ? msg.width : null;
+  state.frameHeight = typeof msg.height === 'number' ? msg.height : null;
+  state.frameName = msg.name != null ? String(msg.name) : '';
+  state.frameId = msg.frameId != null ? String(msg.frameId) : null;
+  state.isReplaceMode = false;
+  state.isBatchMode = false;
+  state.batchFrames = [];
+  renderFramePill();
+}
+
+/**
+ * IMAGE_LAYER_SELECTED — A layer with an image fill is selected.
+ * Activates replace mode: the next insert will overwrite this node's fill.
+ */
+function handleImageLayerSelected(msg: Record<string, unknown>): void {
+  state.isReplaceMode = true;
+  state.isBatchMode = false;
+  state.batchFrames = [];
+  state.frameWidth = typeof msg.width === 'number' ? msg.width : null;
+  state.frameHeight = typeof msg.height === 'number' ? msg.height : null;
+  state.frameName = msg.name != null ? String(msg.name) : '';
+  state.frameId = msg.nodeId != null ? String(msg.nodeId) : null;
+  renderFramePill();
+}
+
+/**
+ * MULTI_FRAME_SELECTED — Two or more frame-like nodes are selected.
+ * Activates batch mode: Generate will produce one image per frame in series.
+ */
+function handleMultiFrameSelected(msg: Record<string, unknown>): void {
+  state.isReplaceMode = false;
+  state.isBatchMode = true;
+  state.frameWidth = null;
+  state.frameHeight = null;
+  state.frameName = '';
+  state.frameId = null;
+  state.batchFrames = Array.isArray(msg.frames)
+    ? (msg.frames as typeof state.batchFrames).slice()
+    : [];
+  renderFramePill();
+}
+
+/**
+ * NO_FRAME_SELECTED — Nothing useful is selected on the canvas.
+ * Resets all selection state so the generator shows "No frame selected".
+ */
+function handleNoFrameSelected(): void {
+  state.frameWidth = null;
+  state.frameHeight = null;
+  state.frameName = '';
+  state.frameId = null;
+  state.isReplaceMode = false;
+  state.isBatchMode = false;
+  state.batchFrames = [];
+  renderFramePill();
+}
+
+/**
+ * BATCH_COMPLETE — code.ts finished inserting all batch items.
+ * Resolves the Promise that runBatchGeneration() is awaiting.
+ */
+function handleBatchComplete(): void {
+  if (state._batchWaitResolve) {
+    state._batchWaitResolve();
+    state._batchWaitResolve = null;
+    state._batchWaitReject = null;
+  }
+}
+
+/**
+ * BATCH_ERROR — code.ts encountered a fatal error during batch insert.
+ * Rejects the Promise that runBatchGeneration() is awaiting, or shows a toast.
+ */
+function handleBatchError(msg: Record<string, unknown>): void {
+  const errorMessage = msg.message != null ? String(msg.message) : 'Batch failed';
+  if (state._batchWaitReject) {
+    state._batchWaitReject(new Error(errorMessage));
+    state._batchWaitResolve = null;
+    state._batchWaitReject = null;
+  } else {
+    showToast(errorMessage, true);
+  }
+}
+
+/**
+ * SELECTED_IMAGE_URL — code.ts extracted a canvas image fill as a data URL.
+ * Stores it as the active style reference and updates the preview.
+ */
+function handleSelectedImageUrl(msg: Record<string, unknown>): void {
+  if (msg.dataUrl != null && String(msg.dataUrl) !== '') {
+    state.styleReferenceDataUrl = String(msg.dataUrl);
+    updateStyleRefUi();
+  }
+}
+
+/**
+ * IMAGE_DATA_RESULT — code.ts fetched image bytes and converted them to a data URL.
+ * Updates the matching thumbnail in the results or library grid.
+ * Also stores the data URL back into state so insert operations use the cached version.
+ */
+function handleImageDataResult(msg: Record<string, unknown>): void {
+  const dataUrlStr = msg.dataUrl != null ? String(msg.dataUrl) : '';
+  const imageIdStr = msg.imageId != null ? String(msg.imageId) : '';
+  if (!dataUrlStr || !imageIdStr) return;
+
+  const cell = findResultCellByImageId(imageIdStr);
+  if (!cell) return;
+
+  const imgEl = cell.querySelector('img') as HTMLImageElement | null;
+  if (imgEl) {
+    imgEl.src = dataUrlStr;
+    imgEl.style.cssText =
+      'display:block;width:100%;height:100%;object-fit:cover;position:relative;z-index:2';
+    // Remove the loading spinner and badge after the image is visible
+    setTimeout(() => {
+      Array.from(cell.children).forEach((child) => {
+        if (child !== imgEl) child.remove();
+      });
+      (cell as HTMLElement).style.background = 'transparent';
+    }, 50);
+  }
+
+  // Cache back into state so subsequent insert calls use the data URL directly
+  const result = state.generationResults.find((r) => String(r.id ?? '') === imageIdStr);
+  if (result) result.imageUrl = dataUrlStr;
+  const libRow = state.libraryRows.find((r) => String(r.id ?? '') === imageIdStr);
+  if (libRow) libRow.imageUrl = dataUrlStr;
+}
+
+/**
+ * IMAGE_DATA_ERROR — code.ts could not fetch or convert the image.
+ * Marks the thumbnail cell as unavailable and shows a brief toast.
+ */
+function handleImageDataError(msg: Record<string, unknown>): void {
+  const failedId = msg.imageId != null ? String(msg.imageId) : '';
+  if (failedId) markImageCellUnavailable(failedId);
+  const fetchErr = msg.message != null ? String(msg.message) : '';
+  if (fetchErr) showToast(`Could not load image preview: ${fetchErr}`, true);
+}
+
+// ---------------------------------------------------------------------------
+// Router — dispatches incoming postMessage payloads to the handlers above.
+// ---------------------------------------------------------------------------
+
+/**
+ * Central postMessage handler for all messages from code.ts.
  *
- * Messages handled:
- *   KEY_LOADED              — restore saved API key; validate and route to correct view
- *   KEY_SAVED               — no-op acknowledgement
- *   BRAND_LOADED            — store and apply saved brandId
- *   FRAME_SELECTED          — single frame selected on canvas
- *   IMAGE_LAYER_SELECTED    — image fill node selected (replace mode)
- *   MULTI_FRAME_SELECTED    — multiple frames selected (batch mode)
- *   NO_FRAME_SELECTED       — selection cleared or non-frame selection
- *   INSERT_SUCCESS          — flash "Inserted" on insert button
- *   REPLACE_SUCCESS         — flash "Replaced" on insert button
- *   BATCH_COMPLETE          — resolves the batch-insert await
- *   INSERT_ERROR            — show error toast
- *   BATCH_ERROR             — reject batch-insert await or show error toast
- *   SELECTED_IMAGE_URL      — store data URL for style reference
- *   SELECTED_IMAGE_URL_ERROR — show style-reference error toast
- *   IMAGE_DATA_RESULT       — update thumbnail src after CORS-free fetch
- *   IMAGE_DATA_ERROR        — mark thumbnail as unavailable
- *   PLUGIN_ERROR            — generic plugin error toast
+ * Message types handled:
+ *   KEY_LOADED, KEY_SAVED              — API key persistence
+ *   BRAND_LOADED                       — brand persistence
+ *   FRAME_SELECTED, IMAGE_LAYER_SELECTED,
+ *   MULTI_FRAME_SELECTED, NO_FRAME_SELECTED — canvas selection state
+ *   INSERT_SUCCESS, REPLACE_SUCCESS    — canvas insert confirmation
+ *   BATCH_COMPLETE, BATCH_ERROR        — batch insert lifecycle
+ *   INSERT_ERROR                       — single insert failure
+ *   SELECTED_IMAGE_URL,
+ *   SELECTED_IMAGE_URL_ERROR           — style reference capture
+ *   IMAGE_DATA_RESULT, IMAGE_DATA_ERROR — CORS-free thumbnail fetch
+ *   PLUGIN_ERROR                       — generic main-thread error
  */
 function onPluginMessage(event: MessageEvent): void {
   try {
@@ -825,139 +1024,19 @@ function onPluginMessage(event: MessageEvent): void {
     if (!msg || typeof msg.type !== 'string') return;
 
     switch (msg.type) {
-      // ---- auth ----
-      case 'KEY_LOADED': {
-        const input = document.getElementById('api-key-input') as HTMLInputElement | null;
-        const key = msg.key != null ? String(msg.key) : '';
-        if (input) input.value = key;
-        if (!key) { showView('setup'); return; }
-        setConnectLoading(true);
-        validateApiKey(key)
-          .then((ok) => {
-            setConnectLoading(false);
-            showView(ok ? 'brand-select' : 'setup');
-            if (!ok) setApiKeyError('Saved API key is no longer valid. Enter a new key.');
-          })
-          .catch((err: unknown) => {
-            setConnectLoading(false);
-            showView('setup');
-            const em = err instanceof Error ? err.message : String(err);
-            setApiKeyError(
-              em.includes("We couldn't reach Bloom")
-                ? em
-                : 'Could not validate saved key. Check your network.',
-            );
-          });
-        break;
-      }
-
-      case 'KEY_SAVED':
-        break;
-
-      // ---- brand ----
-      case 'BRAND_LOADED': {
-        state.savedBrandId = msg.brandId != null ? String(msg.brandId) : null;
-        if (state.currentViewId === 'brand-select' && state.savedBrandId && !state.selectedBrandId) {
-          const listEl = document.getElementById('brand-list');
-          if (listEl) {
-            const card = Array.from(listEl.querySelectorAll('.brand-card')).find(
-              (c) => c.getAttribute('data-brand-id') === state.savedBrandId,
-            );
-            if (card) {
-              state.selectedBrandId = state.savedBrandId;
-              syncBrandSelectionUi();
-            }
-          }
-        }
-        break;
-      }
-
-      // ---- canvas selection ----
-      case 'FRAME_SELECTED':
-        state.frameWidth = typeof msg.width === 'number' ? msg.width : null;
-        state.frameHeight = typeof msg.height === 'number' ? msg.height : null;
-        state.frameName = msg.name != null ? String(msg.name) : '';
-        state.frameId = msg.frameId != null ? String(msg.frameId) : null;
-        state.isReplaceMode = false;
-        state.isBatchMode = false;
-        state.batchFrames = [];
-        renderFramePill();
-        break;
-
-      case 'IMAGE_LAYER_SELECTED':
-        state.isReplaceMode = true;
-        state.isBatchMode = false;
-        state.batchFrames = [];
-        state.frameWidth = typeof msg.width === 'number' ? msg.width : null;
-        state.frameHeight = typeof msg.height === 'number' ? msg.height : null;
-        state.frameName = msg.name != null ? String(msg.name) : '';
-        state.frameId = msg.nodeId != null ? String(msg.nodeId) : null;
-        renderFramePill();
-        break;
-
-      case 'MULTI_FRAME_SELECTED':
-        state.isReplaceMode = false;
-        state.isBatchMode = true;
-        state.frameWidth = null;
-        state.frameHeight = null;
-        state.frameName = '';
-        state.frameId = null;
-        state.batchFrames = Array.isArray(msg.frames)
-          ? (msg.frames as typeof state.batchFrames).slice()
-          : [];
-        renderFramePill();
-        break;
-
-      case 'NO_FRAME_SELECTED':
-        state.frameWidth = null;
-        state.frameHeight = null;
-        state.frameName = '';
-        state.frameId = null;
-        state.isReplaceMode = false;
-        state.isBatchMode = false;
-        state.batchFrames = [];
-        renderFramePill();
-        break;
-
-      // ---- insert / batch ----
-      case 'INSERT_SUCCESS':
-        flashInsertButton('Inserted');
-        break;
-
-      case 'REPLACE_SUCCESS':
-        flashInsertButton('Replaced');
-        break;
-
-      case 'BATCH_COMPLETE':
-        if (state._batchWaitResolve) {
-          state._batchWaitResolve();
-          state._batchWaitResolve = null;
-          state._batchWaitReject = null;
-        }
-        break;
-
-      case 'INSERT_ERROR':
-        showToast(msg.message != null ? String(msg.message) : 'Insert failed', true);
-        break;
-
-      case 'BATCH_ERROR':
-        if (state._batchWaitReject) {
-          state._batchWaitReject(new Error(msg.message != null ? String(msg.message) : 'Batch failed'));
-          state._batchWaitResolve = null;
-          state._batchWaitReject = null;
-        } else {
-          showToast(msg.message != null ? String(msg.message) : 'Batch failed', true);
-        }
-        break;
-
-      // ---- style reference ----
-      case 'SELECTED_IMAGE_URL':
-        if (msg.dataUrl != null && String(msg.dataUrl) !== '') {
-          state.styleReferenceDataUrl = String(msg.dataUrl);
-          updateStyleRefUi();
-        }
-        break;
-
+      case 'KEY_LOADED':              handleKeyLoaded(msg); break;
+      case 'KEY_SAVED':               break; // acknowledged — no UI action needed
+      case 'BRAND_LOADED':            handleBrandLoaded(msg); break;
+      case 'FRAME_SELECTED':          handleFrameSelected(msg); break;
+      case 'IMAGE_LAYER_SELECTED':    handleImageLayerSelected(msg); break;
+      case 'MULTI_FRAME_SELECTED':    handleMultiFrameSelected(msg); break;
+      case 'NO_FRAME_SELECTED':       handleNoFrameSelected(); break;
+      case 'INSERT_SUCCESS':          flashInsertButton('Inserted'); break;
+      case 'REPLACE_SUCCESS':         flashInsertButton('Replaced'); break;
+      case 'BATCH_COMPLETE':          handleBatchComplete(); break;
+      case 'BATCH_ERROR':             handleBatchError(msg); break;
+      case 'INSERT_ERROR':            showToast(msg.message != null ? String(msg.message) : 'Insert failed', true); break;
+      case 'SELECTED_IMAGE_URL':      handleSelectedImageUrl(msg); break;
       case 'SELECTED_IMAGE_URL_ERROR':
         showToast(
           msg.message != null && String(msg.message) !== ''
@@ -966,51 +1045,15 @@ function onPluginMessage(event: MessageEvent): void {
           true,
         );
         break;
-
-      // ---- image data (CORS fallback) ----
-      case 'IMAGE_DATA_RESULT': {
-        const dataUrlStr = msg.dataUrl != null ? String(msg.dataUrl) : '';
-        const imageIdStr = msg.imageId != null ? String(msg.imageId) : '';
-        if (!dataUrlStr || !imageIdStr) break;
-
-        const cell = findResultCellByImageId(imageIdStr);
-        if (!cell) break;
-        const imgEl = cell.querySelector('img') as HTMLImageElement | null;
-        if (imgEl) {
-          imgEl.src = dataUrlStr;
-          imgEl.style.cssText = 'display:block;width:100%;height:100%;object-fit:cover;position:relative;z-index:2';
-          setTimeout(() => {
-            Array.from(cell.children).forEach((child) => {
-              if (child !== imgEl) { child.remove(); }
-            });
-            (cell as HTMLElement).style.background = 'transparent';
-          }, 50);
-        }
-
-        const result = state.generationResults.find((r) => String(r.id ?? '') === imageIdStr);
-        if (result) { result.imageUrl = dataUrlStr; }
-        const libRow = state.libraryRows.find((r) => String(r.id ?? '') === imageIdStr);
-        if (libRow) { libRow.imageUrl = dataUrlStr; }
-        break;
-      }
-
-      case 'IMAGE_DATA_ERROR': {
-        const failedId = msg.imageId != null ? String(msg.imageId) : '';
-        if (failedId) markImageCellUnavailable(failedId);
-        const fetchErr = msg.message != null ? String(msg.message) : '';
-        if (fetchErr) showToast(`Could not load image preview: ${fetchErr}`, true);
-        break;
-      }
-
+      case 'IMAGE_DATA_RESULT':       handleImageDataResult(msg); break;
+      case 'IMAGE_DATA_ERROR':        handleImageDataError(msg); break;
       case 'PLUGIN_ERROR': {
         const op = msg.operation != null ? String(msg.operation) : '';
         const pm = msg.message != null ? String(msg.message) : 'Plugin error';
         showToast(op ? `${op}: ${pm}` : pm, true);
         break;
       }
-
-      default:
-        break;
+      default: break;
     }
   } catch (e: unknown) {
     showToast(e instanceof Error ? e.message : 'Something went wrong.', true);

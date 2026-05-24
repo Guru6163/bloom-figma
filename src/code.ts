@@ -519,7 +519,8 @@ figma.ui.onmessage = async (raw: unknown) => {
     /**
      * FETCH_IMAGE_DATA
      * Fetches image bytes in the plugin sandbox (bypasses iframe CORS),
-     * converts to a base64 data URL, and posts IMAGE_DATA_RESULT to the UI.
+     * converts to a base64 data URL via bytesToDataUrl(), and posts
+     * IMAGE_DATA_RESULT to the UI. Falls back to IMAGE_DATA_ERROR on failure.
      */
     case 'FETCH_IMAGE_DATA': {
       const imageIdForUi =
@@ -536,48 +537,9 @@ figma.ui.onmessage = async (raw: unknown) => {
         if (!rawUrl) {
           throw new Error('Missing image URL');
         }
-        const response = await fetch(rawUrl);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-
-        let mime = 'image/jpeg';
-        if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
-          mime = 'image/png';
-        } else if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
-          mime = 'image/gif';
-        } else if (
-          bytes.length >= 12 &&
-          bytes[0] === 0x52 &&
-          bytes[1] === 0x49 &&
-          bytes[2] === 0x46 &&
-          bytes[3] === 0x46 &&
-          bytes[8] === 0x57 &&
-          bytes[9] === 0x45 &&
-          bytes[10] === 0x42 &&
-          bytes[11] === 0x50
-        ) {
-          mime = 'image/webp';
-        } else if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-          mime = 'image/jpeg';
-        }
-
-        let binary = '';
-        const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) {
-          const sub = bytes.subarray(i, i + chunk);
-          binary += String.fromCharCode.apply(null, Array.from(sub));
-        }
-        const base64 = btoa(binary);
-        const dataUrl = `data:${mime};base64,${base64}`;
-
-        figma.ui.postMessage({
-          type: 'IMAGE_DATA_RESULT',
-          imageId: imageIdForUi,
-          dataUrl,
-        });
+        const bytes = await downloadUrlToBytes(rawUrl);
+        const dataUrl = bytesToDataUrl(bytes);
+        figma.ui.postMessage({ type: 'IMAGE_DATA_RESULT', imageId: imageIdForUi, dataUrl });
       } catch (e) {
         figma.ui.postMessage({
           type: 'IMAGE_DATA_ERROR',
