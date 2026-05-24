@@ -47,9 +47,35 @@ npm run watch        # development with hot reload
 
 ### Load in Figma
 
-1. Open Figma Desktop
-2. Plugins → Development → Import plugin from manifest
-3. Select `manifest.json` from this folder
+1. Run `npm run build` so `dist/code.js` and `dist/ui.html` exist
+2. Open Figma Desktop
+3. Plugins → Development → Import plugin from manifest
+4. Select `manifest.json` from this folder
+
+### Plugin ID (required before publishing)
+
+`manifest.json` intentionally omits the `id` field so each customer owns their own Figma plugin identity. You can develop and import the plugin locally without an `id`.
+
+When you are ready to publish to the Figma Community (or ship updates to an existing listing):
+
+1. In Figma Desktop: Plugins → Development → **New plugin…** (or open your existing plugin project)
+2. Copy the numeric `id` from the generated `manifest.json`, or copy the ID Figma shows when you first publish
+3. Add it to this repo’s `manifest.json`:
+
+```json
+{
+  "name": "Bloom – On-Brand Image Generator",
+  "id": "YOUR_FIGMA_PLUGIN_ID",
+  "api": "1.0.0",
+  ...
+}
+```
+
+Never reuse Bloom’s or another team’s plugin ID — Figma uses `id` to route updates to the correct listing.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ## Project structure
 

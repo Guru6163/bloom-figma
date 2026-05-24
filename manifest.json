@@ -1,6 +1,5 @@
 {
   "name": "Bloom – On-Brand Image Generator",
-  "id": "1634437000763292649",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/ui.html",
