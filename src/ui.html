@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <!--
   Bloom Figma plugin — UI HTML template for HtmlWebpackPlugin.
-  Contains markup and inline script; global styles load via the webpack-inlined ui bundle (ui-styles.ts → ui.css → ui.js in head).
+  What: plugin iframe markup plus inline UI script (views, Bloom REST client, postMessage bridge).
+  Why: the UI sandbox can call Bloom with fetch but cannot use figma.*; code.ts handles the canvas.
+  How: webpack inlines ui.js from ui-styles.ts → ui.css; this file is the HtmlWebpackPlugin template.
 -->
 <html lang="en">
 <head>
@@ -880,8 +882,10 @@
         } else {
           el.textContent = 'Credits: ' + String(balance);
         }
-      } catch (_e) {
-        el.textContent = 'Credits: Error';
+      } catch (e) {
+        var creditErr = e instanceof Error ? e.message : String(e);
+        el.textContent = 'Credits: unavailable';
+        showToast("Couldn't load credits: " + creditErr, true);
       }
     }
 
@@ -1168,7 +1172,7 @@
             // Also try direct load as fallback
             img.src = resolved;
             img.onerror = function () {
-              // FETCH_IMAGE_DATA already sent above for non-data URLs
+              onThumbImgError(idStr, resolved);
             };
           } else {
             loadWrap.classList.add('is-hidden');
@@ -1368,7 +1372,9 @@
               postToCode({ type: 'FETCH_IMAGE_DATA', imageId: idStr, imageUrl: resolved });
             }
             img.src = resolved;
-            img.onerror = function () {};
+            img.onerror = function () {
+              onThumbImgError(idStr, resolved);
+            };
           } else {
             loadWrap.classList.add('is-hidden');
             btn.classList.add('image-cell--unavailable');
@@ -1611,6 +1617,18 @@
         }
       }
       return null;
+    }
+
+    /**
+     * Handles `<img>` load failures for results/library thumbnails.
+     * @param {string} imageId Bloom image id for the cell.
+     * @param {string} resolved Absolute or data URL assigned to the img.
+     */
+    function onThumbImgError(imageId, resolved) {
+      if (resolved.indexOf('data:') === 0) {
+        markImageCellUnavailable(imageId);
+      }
+      // Remote URLs: `code.ts` FETCH_IMAGE_DATA posts IMAGE_DATA_RESULT or IMAGE_DATA_ERROR.
     }
 
     /**
@@ -2213,7 +2231,12 @@
           }
           break;
         case 'SELECTED_IMAGE_URL_ERROR':
-          showToast('Select an image layer first', true);
+          showToast(
+            msg.message != null && String(msg.message) !== ''
+              ? String(msg.message)
+              : 'Select an image layer with an image fill.',
+            true
+          );
           break;
         case 'IMAGE_DATA_RESULT': {
           const { imageId, dataUrl } = msg;
@@ -2261,12 +2284,21 @@
           }
           break;
         }
-        case 'IMAGE_DATA_ERROR':
-          if (msg.imageId != null) markImageCellUnavailable(String(msg.imageId));
+        case 'IMAGE_DATA_ERROR': {
+          var failedId = msg.imageId != null ? String(msg.imageId) : '';
+          if (failedId) markImageCellUnavailable(failedId);
+          var fetchErr = msg.message != null ? String(msg.message) : '';
+          if (fetchErr) {
+            showToast('Could not load image preview' + (fetchErr ? ': ' + fetchErr : ''), true);
+          }
           break;
-        case 'PLUGIN_ERROR':
-          if (msg.message != null) showToast(String(msg.message), true);
+        }
+        case 'PLUGIN_ERROR': {
+          var pluginOp = msg.operation != null ? String(msg.operation) : '';
+          var pluginMsg = msg.message != null ? String(msg.message) : 'Plugin error';
+          showToast(pluginOp ? pluginOp + ': ' + pluginMsg : pluginMsg, true);
           break;
+        }
         default:
           break;
       }

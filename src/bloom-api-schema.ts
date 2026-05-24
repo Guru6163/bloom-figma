@@ -21,6 +21,8 @@ export interface BloomApiErrorBody {
 
 /**
  * Best-effort extraction of a human-readable message from a Bloom error JSON body.
+ * @param body - Parsed JSON from a non-2xx response, or `null` when the body was empty.
+ * @returns The first usable message string, or `undefined` if none was found.
  */
 export function extractBloomErrorMessage(body: unknown): string | undefined {
   if (body === null || typeof body !== 'object') return undefined;
@@ -126,6 +128,8 @@ export interface BloomBrand extends BloomBrandDetailData {
 
 /**
  * Adds `brandSessionId` alias equal to brand `id` for plugin code paths.
+ * @param row - Brand list item from GET /brands or full detail from GET /brands/{id}.
+ * @returns A `BloomBrand` with `brandSessionId` set; list rows get empty logo/colors defaults.
  */
 export function toBloomBrand(row: BloomBrandListItem | BloomBrandDetailData): BloomBrand {
   if ('logoUrl' in row) {
@@ -308,6 +312,8 @@ export interface BloomSearchImagesBody {
 
 /**
  * Treats missing/null image status as pending for polling logic.
+ * @param row - Image row from GET /images list or GET /images/{id}.
+ * @returns `pending` when `status` is null/undefined; otherwise the API status unchanged.
  */
 export function effectiveImageGenStatus(row: BloomImageListItem | BloomImageGetData): BloomImageGenStatus {
   const s = row.status;

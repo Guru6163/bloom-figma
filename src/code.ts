@@ -54,6 +54,13 @@ function postPluginError(operation: string, err: unknown): void {
 }
 
 /**
+ * Notifies the UI that style-reference capture from the canvas selection failed.
+ */
+function postSelectedImageUrlError(message: string): void {
+  figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR', message });
+}
+
+/**
  * Returns true if the node behaves like a frame for insertion targets (frame, component root, instance).
  */
 function isFrameLike(
@@ -293,6 +300,10 @@ figma.on('selectionchange', () => {
 figma.ui.onmessage = async (raw: unknown) => {
   try {
     if (!raw || typeof raw !== 'object' || !('type' in raw) || typeof (raw as { type: unknown }).type !== 'string') {
+      postPluginError(
+        'onmessage',
+        new Error('Invalid message from UI: expected an object with a string `type` field.')
+      );
       return;
     }
     const msg = raw as PluginMessage;
@@ -481,25 +492,26 @@ figma.ui.onmessage = async (raw: unknown) => {
       try {
         const sel = figma.currentPage.selection;
         if (sel.length !== 1) {
-          figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
+          postSelectedImageUrlError('Select exactly one layer on the canvas.');
           break;
         }
         const node = sel[0];
         const hash = getFirstImageHash(node);
         if (!hash) {
-          figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
+          postSelectedImageUrlError('Selected layer has no image fill. Choose a layer with an image.');
           break;
         }
         const image = figma.getImageByHash(hash);
         if (!image) {
-          figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
+          postSelectedImageUrlError('Could not read the image from the selected layer.');
           break;
         }
         const bytes = await image.getBytesAsync();
         const dataUrl = bytesToDataUrl(bytes);
         figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL', dataUrl });
-      } catch (_e) {
-        figma.ui.postMessage({ type: 'SELECTED_IMAGE_URL_ERROR' });
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e);
+        postSelectedImageUrlError(`Could not export the selected image: ${detail}`);
       }
       break;
     }

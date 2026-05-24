@@ -94,6 +94,10 @@ function isTerminalGenStatus(s: ReturnType<typeof effectiveImageGenStatus>): boo
 
 /**
  * Validates an API key by attempting to list brands.
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @returns `true` when GET /brands succeeds with the key.
+ * @throws When the request fails for network/DNS reasons (message starts with "We couldn't reach Bloom").
+ * Returns `false` for invalid or unauthorized keys (HTTP 4xx), not for network failures.
  */
 export async function validateApiKey(apiKey: string): Promise<boolean> {
   try {
@@ -110,6 +114,9 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
 
 /**
  * Returns all brands for this API key (cursor pagination via `nextCursor` / `hasMore`).
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @returns Every brand across all pages, normalized via `toBloomBrand`.
+ * @throws On network failure or any non-2xx HTTP response from the Bloom API.
  */
 export async function listBrands(apiKey: string): Promise<BloomBrand[]> {
   const out: BloomBrand[] = [];
@@ -138,7 +145,11 @@ export async function listBrands(apiKey: string): Promise<BloomBrand[]> {
 }
 
 /**
- * POST /brands — returns 202; `data` contains id, status, optional logoError.
+ * Starts brand onboarding from a website URL (POST /brands).
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @param url - Public website URL for Bloom to analyze.
+ * @returns A provisional `BloomBrand` with status `analyzing` or `logo_required`; poll with `getBrand`.
+ * @throws On network failure or non-2xx HTTP response.
  */
 export async function onboardBrand(apiKey: string, url: string): Promise<BloomBrand> {
   const { data: d } = await bloomFetch<BloomSuccessEnvelope<BloomOnboardBrandData>>('/brands', apiKey, {
@@ -159,7 +170,11 @@ export async function onboardBrand(apiKey: string, url: string): Promise<BloomBr
 }
 
 /**
- * GET /brands/{id}
+ * Fetches a single brand by id (GET /brands/{id}).
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @param brandId - Brand id / brand session id.
+ * @returns Full brand detail with `brandSessionId` alias.
+ * @throws On network failure or non-2xx HTTP response (e.g. unknown id).
  */
 export async function getBrand(apiKey: string, brandId: string): Promise<BloomBrand> {
   const { data: detail } = await bloomFetch<BloomSuccessEnvelope<BloomBrandDetailData>>(
@@ -171,7 +186,14 @@ export async function getBrand(apiKey: string, brandId: string): Promise<BloomBr
 }
 
 /**
- * POST /images/generations — returns image IDs; response includes variantGroupId and status.
+ * Starts on-brand image generation (POST /images/generations).
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @param brandSessionId - Active brand session id.
+ * @param prompt - Generation prompt text.
+ * @param aspectRatio - Bloom aspect ratio token (e.g. `"16:9"`).
+ * @param variantCount - Desired variants; clamped to 1–5 inclusive.
+ * @returns Image ids to pass to `pollImages`.
+ * @throws On network failure or non-2xx HTTP response.
  */
 export async function generateImages(
   apiKey: string,
@@ -198,7 +220,13 @@ export async function generateImages(
 }
 
 /**
- * POST /images/{id}/edit
+ * Starts an image edit from a text instruction (POST /images/{id}/edit).
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @param brandSessionId - Active brand session id.
+ * @param imageId - Source image id to edit.
+ * @param prompt - Edit instruction text.
+ * @returns Singleton array with the new pending image id (for `pollImages` parity with generate).
+ * @throws On network failure or non-2xx HTTP response.
  */
 export async function editImage(
   apiKey: string,
@@ -235,7 +263,11 @@ export interface ListImagesQuery {
 }
 
 /**
- * GET /images — cursor-based list. Pass `includeUrls: true` for signed download URLs on completed images.
+ * Lists images with optional filters (GET /images).
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @param query - Optional ids, brandSessionId, cursor, `includeUrls`, `wait`, etc.
+ * @returns One page of `data` (`images`, `nextCursor`, `hasMore`).
+ * @throws On network failure or non-2xx HTTP response.
  */
 export async function listImages(apiKey: string, query: ListImagesQuery = {}): Promise<BloomImagesListData> {
   const qs = new URLSearchParams();
@@ -275,7 +307,14 @@ export async function listImages(apiKey: string, query: ListImagesQuery = {}): P
 }
 
 /**
- * Polls the Bloom API until all images are complete.
+ * Polls the Bloom API until all requested images reach a terminal status.
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @param brandSessionId - Brand session id (sent as query param when non-empty).
+ * @param imageIds - Ids returned from `generateImages` or `editImage`.
+ * @param onProgress - Called with 0–100 as images reach `completed` or `failed`.
+ * @returns Completed image rows with URLs when `includeUrls` was requested.
+ * @throws If any image status is `failed`, or after 120s without all ids terminal.
+ * Calls `onProgress(100)` immediately when `imageIds` is empty.
  */
 export async function pollImages(
   apiKey: string,
@@ -348,7 +387,10 @@ export async function pollImages(
 }
 
 /**
- * GET /credits — returns numeric balance; unlimited accounts return `Number.MAX_SAFE_INTEGER`.
+ * Fetches the account credit balance (GET /credits).
+ * @param apiKey - Bloom API key sent as `x-api-key`.
+ * @returns Numeric balance, or `Number.MAX_SAFE_INTEGER` when `data.unlimited` is true.
+ * @throws On network failure or non-2xx HTTP response.
  */
 export async function getCredits(apiKey: string): Promise<number> {
   const { data: credits } = await bloomFetch<BloomSuccessEnvelope<BloomCreditsData>>('/credits', apiKey, {
