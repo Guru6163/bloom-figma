@@ -1,22 +1,11 @@
-/**
- * @file DOM rendering and sync helpers for the Bloom plugin UI.
- *
- * Pure DOM functions: they read from `state`, update the DOM, and post
- * messages to code.ts. They do NOT trigger API calls or view transitions.
- */
+// DOM rendering and sync helpers. Reads from state, writes to DOM.
+// No API calls or view transitions — those live in app.ts.
 
 import { state, postToCode, PROMPT_MAX } from './state';
 import { getImageUrl } from './client';
 
-// ---------------------------------------------------------------------------
-// Generator controls
-// ---------------------------------------------------------------------------
-
-/**
- * Maps pixel dimensions to the closest Bloom aspect ratio.
- * Tolerance: ±8 % for square/portrait, ±10 % for landscape.
- * Falls back to "1:1" when no candidate matches.
- */
+// Maps pixel dimensions to the closest Bloom aspect ratio.
+// Tolerances: ±8% for square/portrait, ±10% for landscape.
 export function detectAspectRatio(w: number, h: number): string {
   if (!(w > 0) || !(h > 0)) return '1:1';
   const α = w / h;
@@ -33,7 +22,6 @@ export function detectAspectRatio(w: number, h: number): string {
   return matches.length > 0 ? matches[0].id : '1:1';
 }
 
-/** Returns the aspect ratio to send to Bloom: the manual selection or auto-detected from frame dims. */
 export function getEffectiveAspectRatio(): string {
   if (state.selectedRatio !== 'auto') return state.selectedRatio;
   if (state.frameWidth != null && state.frameHeight != null && state.frameWidth > 0 && state.frameHeight > 0) {
@@ -42,7 +30,6 @@ export function getEffectiveAspectRatio(): string {
   return '1:1';
 }
 
-/** Renders variant count buttons (1–5), highlighting the active count. */
 export function renderVariants(): void {
   const host = document.getElementById('variant-buttons');
   if (!host) return;
@@ -54,15 +41,11 @@ export function renderVariants(): void {
     btn.className = 'variant-btn' + (active ? ' is-selected' : '');
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     btn.textContent = String(n);
-    btn.addEventListener('click', () => {
-      state.variantCount = n;
-      renderVariants();
-    });
+    btn.addEventListener('click', () => { state.variantCount = n; renderVariants(); });
     host.appendChild(btn);
   }
 }
 
-/** Renders aspect-ratio pills (Auto | 1:1 | 4:5 | 9:16 | 16:9), highlighting the selection. */
 export function renderRatios(): void {
   const host = document.getElementById('ratio-pills');
   if (!host) return;
@@ -82,18 +65,11 @@ export function renderRatios(): void {
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     btn.setAttribute('data-ratio', entry.value);
     btn.textContent = entry.label;
-    btn.addEventListener('click', () => {
-      state.selectedRatio = entry.value;
-      renderRatios();
-    });
+    btn.addEventListener('click', () => { state.selectedRatio = entry.value; renderRatios(); });
     host.appendChild(btn);
   }
 }
 
-/**
- * Updates the frame-pill label to reflect the current canvas selection:
- * frame name + dimensions, replace mode, batch mode, or "No frame selected".
- */
 export function renderFramePill(): void {
   const el = document.getElementById('frame-pill');
   if (!el) return;
@@ -102,8 +78,7 @@ export function renderFramePill(): void {
   } else if (state.isBatchMode && state.batchFrames.length > 0) {
     el.textContent = `Batch mode — ${state.batchFrames.length} frames`;
   } else if (state.frameWidth != null && state.frameHeight != null && state.frameName) {
-    el.textContent =
-      `${state.frameName} · ${Math.round(state.frameWidth)}×${Math.round(state.frameHeight)}px`;
+    el.textContent = `${state.frameName} · ${Math.round(state.frameWidth)}×${Math.round(state.frameHeight)}px`;
   } else if (state.frameWidth != null && state.frameHeight != null) {
     el.textContent = `${Math.round(state.frameWidth)}×${Math.round(state.frameHeight)}px`;
   } else {
@@ -111,7 +86,6 @@ export function renderFramePill(): void {
   }
 }
 
-/** Syncs the prompt character counter, truncates at max, and enables/disables Generate. */
 export function syncPromptUi(): void {
   const ta = document.getElementById('prompt-input') as HTMLTextAreaElement | null;
   const countEl = document.getElementById('prompt-count');
@@ -125,7 +99,6 @@ export function syncPromptUi(): void {
   if (btn) btn.disabled = state._generationRunning || raw.trim().length === 0;
 }
 
-/** Shows or hides the style-reference preview image and syncs the Clear button. */
 export function updateStyleRefUi(): void {
   const wrap = document.getElementById('style-ref-preview-wrap');
   const img = document.getElementById('style-ref-preview') as HTMLImageElement | null;
@@ -142,24 +115,16 @@ export function updateStyleRefUi(): void {
   syncPromptUi();
 }
 
-/** Sets the heading text of the generating spinner view. */
 export function setGeneratingTitle(title?: string): void {
   const el = document.getElementById('gen-loading-title');
   if (el) el.textContent = title ?? 'Generating…';
 }
 
-/** No-op placeholder; reserved for a future determinate progress bar. */
+// Reserved for a future determinate progress bar.
 export function setGeneratingProgress(_pct?: number): void {}
 
-// ---------------------------------------------------------------------------
-// Results grid
-// ---------------------------------------------------------------------------
-
-/**
- * Builds the thumbnail `<img>` for a result cell.
- * Proactively posts FETCH_IMAGE_DATA to bypass iframe CORS, then falls back
- * to a direct src load.
- */
+// Proactively posts FETCH_IMAGE_DATA so code.ts can fetch the bytes outside the
+// iframe's CORS restrictions, then falls back to a direct src load.
 function buildThumbImg(
   idStr: string,
   imageUrl: string,
@@ -187,9 +152,6 @@ function buildThumbImg(
   return img;
 }
 
-/**
- * Creates a complete image-cell `<button>` for results or library grids.
- */
 function buildImageCell(
   idStr: string,
   imageUrl: string,
@@ -238,9 +200,6 @@ function buildImageCell(
   return btn;
 }
 
-/**
- * Renders generationResults into the results grid and auto-selects the first image.
- */
 export function showResults(onZoom: (idx: number) => void): void {
   const grid = document.getElementById('results-grid');
   if (!grid) return;
@@ -267,7 +226,6 @@ export function showResults(onZoom: (idx: number) => void): void {
   if (regenBtn) regenBtn.disabled = !state.lastGenerateSnapshot;
 }
 
-/** Applies the current selectedImageId highlight to all cells in the results grid. */
 export function syncResultsGridSelection(): void {
   const grid = document.getElementById('results-grid');
   if (!grid) return;
@@ -278,9 +236,6 @@ export function syncResultsGridSelection(): void {
   });
 }
 
-/**
- * Renders libraryRows into the library grid.
- */
 export function renderLibraryGrid(onZoom: (idx: number) => void): void {
   const grid = document.getElementById('library-grid');
   if (!grid) return;
@@ -302,7 +257,6 @@ export function renderLibraryGrid(onZoom: (idx: number) => void): void {
   });
 }
 
-/** Applies the current librarySelectedId highlight to all cells in the library grid. */
 export function syncLibraryGridSelection(): void {
   const grid = document.getElementById('library-grid');
   if (!grid) return;
@@ -313,11 +267,6 @@ export function syncLibraryGridSelection(): void {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Brand list
-// ---------------------------------------------------------------------------
-
-/** Human-readable label for a raw brand status string from the API. */
 export function formatBrandStatus(status: string): string {
   const labels: Record<string, string> = {
     ready: 'Ready',
@@ -328,7 +277,6 @@ export function formatBrandStatus(status: string): string {
   return labels[status] ?? (status ? String(status) : '');
 }
 
-/** Renders placeholder skeleton cards while the brand list is loading. */
 export function renderBrandSkeletons(container: HTMLElement, count: number): void {
   container.innerHTML = '';
   for (let s = 0; s < count; s++) {
@@ -345,13 +293,11 @@ export function renderBrandSkeletons(container: HTMLElement, count: number): voi
   }
 }
 
-/** Enables or disables the brand Continue button. */
 export function setBrandContinueEnabled(enabled: boolean): void {
   const btn = document.getElementById('btn-brand-continue') as HTMLButtonElement | null;
   if (btn) btn.disabled = !enabled;
 }
 
-/** Updates selection highlight and Continue button based on state.selectedBrandId. */
 export function syncBrandSelectionUi(): void {
   const list = document.getElementById('brand-list');
   if (!list) return;
@@ -363,7 +309,6 @@ export function syncBrandSelectionUi(): void {
   setBrandContinueEnabled(!!state.selectedBrandId);
 }
 
-/** Shows or hides the brand-picker error message. */
 export function setBrandListError(text: string): void {
   const el = document.getElementById('brand-list-error');
   if (!el) return;
@@ -371,18 +316,12 @@ export function setBrandListError(text: string): void {
   el.classList.toggle('is-visible', !!text);
 }
 
-/** Shows or hides the "Learning your brand…" onboarding status line. */
 export function setOnboardStatusVisible(visible: boolean): void {
   const el = document.getElementById('brand-onboard-status');
   if (!el) return;
   el.classList.toggle('is-visible', visible);
 }
 
-// ---------------------------------------------------------------------------
-// Setup view
-// ---------------------------------------------------------------------------
-
-/** Shows or clears the inline error under the API key field. */
 export function setApiKeyError(text: string): void {
   const el = document.getElementById('api-key-error');
   if (!el) return;
@@ -390,7 +329,6 @@ export function setApiKeyError(text: string): void {
   el.classList.toggle('is-visible', !!text);
 }
 
-/** Disables the Connect button and updates its label during async validation. */
 export function setConnectLoading(isLoading: boolean): void {
   const btn = document.getElementById('btn-setup-connect') as HTMLButtonElement | null;
   if (!btn) return;
@@ -398,14 +336,7 @@ export function setConnectLoading(isLoading: boolean): void {
   btn.textContent = isLoading ? 'Checking…' : 'Connect';
 }
 
-// ---------------------------------------------------------------------------
-// Insert button flash
-// ---------------------------------------------------------------------------
-
-/**
- * Temporarily changes Insert button labels to a confirmation string,
- * then restores the originals after 1.8 s.
- */
+// Temporarily changes Insert button labels to a confirmation string, then restores after 1.8 s.
 export function flashInsertButton(label: string): void {
   if (state._insertFlashTimer) clearTimeout(state._insertFlashTimer);
   const ids = ['btn-insert-selected', 'btn-library-insert'];
@@ -422,14 +353,7 @@ export function flashInsertButton(label: string): void {
   }, 1800);
 }
 
-// ---------------------------------------------------------------------------
-// Image cell error handling
-// ---------------------------------------------------------------------------
-
-/**
- * Finds a result/library cell button by Bloom image id.
- * Avoids querySelector escaping issues for unusual id characters.
- */
+// Avoids querySelector escaping issues for unusual id characters.
 export function findResultCellByImageId(imageId: string): Element | null {
   const idStr = imageId != null ? String(imageId) : '';
   if (!idStr) return null;
@@ -439,18 +363,13 @@ export function findResultCellByImageId(imageId: string): Element | null {
   ];
   for (const grid of grids) {
     if (!grid) continue;
-    const cells = grid.querySelectorAll('.image-cell');
-    for (const cell of Array.from(cells)) {
+    for (const cell of Array.from(grid.querySelectorAll('.image-cell'))) {
       if (String(cell.getAttribute('data-image-id') ?? '') === idStr) return cell;
     }
   }
   return null;
 }
 
-/**
- * Marks a thumbnail cell as failed/unavailable.
- * Called after IMAGE_DATA_ERROR or a failed data-URL load.
- */
 export function markImageCellUnavailable(imageId: string | number): void {
   const cell = findResultCellByImageId(String(imageId));
   if (!cell) return;
@@ -466,11 +385,8 @@ export function markImageCellUnavailable(imageId: string | number): void {
   ph.textContent = 'Image unavailable';
 }
 
-/**
- * Handles `<img>` onerror for results and library thumbnails.
- * For data URLs the cell is marked unavailable immediately;
- * for remote URLs the FETCH_IMAGE_DATA path handles the error via IMAGE_DATA_ERROR.
- */
+// For data URLs the cell is marked unavailable immediately; for remote URLs the
+// FETCH_IMAGE_DATA path handles the error via IMAGE_DATA_ERROR.
 export function onThumbImgError(imageId: string, resolved: string): void {
   if (resolved.startsWith('data:')) {
     markImageCellUnavailable(imageId);

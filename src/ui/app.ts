@@ -1,18 +1,4 @@
-/**
- * @file Bloom plugin UI — application logic, view controller, and bootstrap.
- *
- * Responsibilities:
- *  - View navigation (showView)
- *  - Setup view: API key validation and persistence
- *  - Brand picker: listing, onboarding, selection
- *  - Generator: prompt handling, aspect-ratio, generation and batch flows
- *  - Results: insert, edit, regenerate
- *  - Library: pagination, insert
- *  - Zoom overlay: open/close/navigate
- *  - postMessage handler (code.ts → UI)
- *  - Event listener wiring
- *  - Plugin bootstrap
- */
+// View controller, generation flows, event wiring, and plugin bootstrap.
 
 import {
   state,
@@ -65,24 +51,13 @@ import {
   detectAspectRatio,
 } from './render';
 
-// =============================================================================
-// View navigation
-// =============================================================================
-
-/**
- * Shows one view and hides all others.
- * Triggers side-effects for views that need data on entry
- * (e.g. brand list reload, selection refresh, library load).
- */
 export function showView(id: string): void {
   state.currentViewId = id;
   document.querySelectorAll<HTMLElement>('#app-stage .view').forEach((el) => {
     el.style.display = el.id === id ? 'flex' : 'none';
   });
 
-  if (id === 'brand-select') {
-    void loadBrands();
-  }
+  if (id === 'brand-select') void loadBrands();
   if (id === 'generator') {
     requestSelection();
     void loadCredits();
@@ -92,27 +67,15 @@ export function showView(id: string): void {
     updateStyleRefUi();
     syncPromptUi();
   }
-  if (id === 'library') {
-    void openLibraryView();
-  }
+  if (id === 'library') void openLibraryView();
 }
 
-// =============================================================================
-// Setup view — API key
-// =============================================================================
-
-/**
- * Validates the entered API key, persists it via code.ts, and advances to brand-select.
- */
 function onConnectClick(): void {
   const input = document.getElementById('api-key-input') as HTMLInputElement | null;
   if (!input) return;
   const key = input.value.trim();
   setApiKeyError('');
-  if (!key) {
-    setApiKeyError('Please enter your Bloom API key.');
-    return;
-  }
+  if (!key) { setApiKeyError('Please enter your Bloom API key.'); return; }
   setConnectLoading(true);
   validateApiKey(key)
     .then((ok) => {
@@ -131,14 +94,7 @@ function onConnectClick(): void {
     });
 }
 
-// =============================================================================
-// Brand picker
-// =============================================================================
-
-/**
- * Decides which brand should be highlighted when the list first loads.
- * Prefers the currently in-session selection, then the last persisted brand.
- */
+// Prefers in-session selection, then falls back to the last persisted brand.
 function pickInitialSelection(brands: Brand[]): string | null {
   if (state.selectedBrandId && brands.some((b) => b.id === state.selectedBrandId)) {
     return state.selectedBrandId;
@@ -149,10 +105,6 @@ function pickInitialSelection(brands: Brand[]): string | null {
   return null;
 }
 
-/**
- * Fetches brands from the Bloom API and renders them as selectable cards.
- * Shows skeleton placeholders while loading.
- */
 async function loadBrands(): Promise<void> {
   const gen = ++state._loadBrandsGen;
   const listEl = document.getElementById('brand-list');
@@ -235,10 +187,6 @@ async function loadBrands(): Promise<void> {
   }
 }
 
-/**
- * Submits a new brand URL to Bloom, polls until the brand is ready,
- * then refreshes the brand list and auto-selects the new brand.
- */
 async function onAddBrandFromUrl(): Promise<void> {
   const urlInput = document.getElementById('brand-url-input') as HTMLInputElement | null;
   const addBtn = document.getElementById('btn-brand-add') as HTMLButtonElement | null;
@@ -276,7 +224,6 @@ async function onAddBrandFromUrl(): Promise<void> {
       last = await getBrand(apiKey, brandId);
 
       if (last.status === 'ready') break;
-
       if (last.status === 'failed') throw new Error('Brand analysis failed');
 
       if (last.status === 'logo_required') {
@@ -307,7 +254,6 @@ async function onAddBrandFromUrl(): Promise<void> {
   }
 }
 
-/** Confirms the selected brand, persists it, and navigates to the generator. */
 function onBrandContinueClick(): void {
   if (!state.selectedBrandId) { showToast('Select a brand first', true); return; }
   state.savedBrandId = state.selectedBrandId;
@@ -315,16 +261,10 @@ function onBrandContinueClick(): void {
   showView('generator');
 }
 
-// =============================================================================
-// Generator — credits & prompt helpers
-// =============================================================================
-
-/** Sends GET_SELECTION to code.ts to refresh the current canvas selection. */
 function requestSelection(): void {
   postToCode({ type: 'GET_SELECTION' });
 }
 
-/** Fetches credit balance and updates the credits label. */
 async function loadCredits(): Promise<void> {
   const el = document.getElementById('credits');
   if (!el) return;
@@ -340,22 +280,11 @@ async function loadCredits(): Promise<void> {
   }
 }
 
-/** Appends the style-reference suffix to the prompt when a canvas image is captured. */
 function buildApiPrompt(baseText: string): string {
   const trimmed = (baseText || '').trim();
   return state.styleReferenceDataUrl ? trimmed + STYLE_REF_SUFFIX : trimmed;
 }
 
-// =============================================================================
-// Generation flow
-// =============================================================================
-
-/**
- * Core generation pipeline:
- * 1. POST /images/generations
- * 2. Poll until all images complete
- * 3. Populate results grid and navigate to the results view
- */
 async function runGenerationCore(
   apiPrompt: string,
   insertPromptLabel: string,
@@ -403,7 +332,6 @@ async function runGenerationCore(
   }
 }
 
-/** Reads the prompt field and starts a standard (non-batch) generation run. */
 async function runGeneration(): Promise<void> {
   const ta = document.getElementById('prompt-input') as HTMLTextAreaElement | null;
   const base = ta ? ta.value.trim() : '';
@@ -411,18 +339,13 @@ async function runGeneration(): Promise<void> {
   await runGenerationCore(buildApiPrompt(base), base, getEffectiveAspectRatio(), state.variantCount);
 }
 
-/** Re-runs generation using the last successful snapshot and current style reference. */
 function onRegenerateClick(): void {
   if (state._generationRunning || !state.lastGenerateSnapshot) return;
   const snap = state.lastGenerateSnapshot;
   void runGenerationCore(buildApiPrompt(snap.basePrompt), snap.basePrompt, snap.effectiveRatio, snap.variantCount);
 }
 
-// =============================================================================
-// Batch generation
-// =============================================================================
-
-/** Resolves the batch-insert Promise created by waitForBatchComplete(). */
+// Returns a Promise that resolves/rejects when code.ts sends BATCH_COMPLETE / BATCH_ERROR.
 function waitForBatchComplete(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     state._batchWaitResolve = resolve;
@@ -430,10 +353,6 @@ function waitForBatchComplete(): Promise<void> {
   });
 }
 
-/**
- * Batch mode: generates one image per selected frame (in series),
- * then sends BATCH_INSERT to code.ts with all results.
- */
 async function runBatchGeneration(): Promise<void> {
   const apiKey = getApiKey();
   const brandSessionId = getBrandSessionId();
@@ -500,16 +419,11 @@ async function runBatchGeneration(): Promise<void> {
   }
 }
 
-/** Dispatches to batch or single generation based on current selection mode. */
 function onGenerateClick(): void {
   if (state._generationRunning) return;
   if (state.isBatchMode) void runBatchGeneration();
   else void runGeneration();
 }
-
-// =============================================================================
-// Results — selection and insert
-// =============================================================================
 
 function getSelectedResult() {
   return (
@@ -519,15 +433,13 @@ function getSelectedResult() {
 }
 
 function getSelectedImageUrl(): string {
-  const r = getSelectedResult();
-  return r?.imageUrl ?? '';
+  return getSelectedResult()?.imageUrl ?? '';
 }
 
 function getSelectedResultAspectRatio(): string {
   return getSelectedResult()?.aspectRatio ?? '1:1';
 }
 
-/** Inserts or replaces the selected generation result on the Figma canvas. */
 function onInsertSelectedClick(): void {
   const url = getSelectedImageUrl();
   if (!url) { showToast('Select an image', true); return; }
@@ -543,17 +455,11 @@ function onInsertSelectedClick(): void {
   }
 }
 
-/** Returns to the generator view for a fresh generation. */
 function onNewGenerationClick(): void {
   closeZoom();
   showView('generator');
 }
 
-// =============================================================================
-// Edit panel
-// =============================================================================
-
-/** Toggles visibility of the inline edit-instruction panel. */
 function onEditToggleClick(): void {
   const panel = document.getElementById('edit-panel');
   const btn = document.getElementById('btn-edit-toggle');
@@ -562,10 +468,6 @@ function onEditToggleClick(): void {
   btn.setAttribute('aria-expanded', panel.classList.contains('is-hidden') ? 'false' : 'true');
 }
 
-/**
- * Submits an edit instruction for the selected image,
- * then replaces that result in the grid when done.
- */
 async function onApplyEditClick(): Promise<void> {
   if (state._editRunning || state._generationRunning) return;
   const sel = getSelectedResult();
@@ -617,26 +519,15 @@ async function onApplyEditClick(): Promise<void> {
   }
 }
 
-// =============================================================================
-// Style reference
-// =============================================================================
-
-/** Requests a data URL for the selected canvas image (for style reference). */
 function onStyleRefCaptureClick(): void {
   postToCode({ type: 'GET_SELECTED_IMAGE_URL' });
 }
 
-/** Clears the captured style reference and resets the preview. */
 function onStyleRefClearClick(): void {
   state.styleReferenceDataUrl = null;
   updateStyleRefUi();
 }
 
-// =============================================================================
-// Library view
-// =============================================================================
-
-/** Resets library state and loads the first page of completed generated images. */
 async function openLibraryView(): Promise<void> {
   const errEl = document.getElementById('library-error');
   if (errEl) { errEl.textContent = ''; errEl.classList.remove('is-visible'); }
@@ -663,7 +554,6 @@ async function openLibraryView(): Promise<void> {
   await loadLibraryNextPage(gen);
 }
 
-/** Fetches the next page of library images; guards against stale loads. */
 async function loadLibraryNextPage(gen = state._libraryLoadGen): Promise<void> {
   if (gen !== state._libraryLoadGen) return;
   if (state._libraryLoading) return;
@@ -730,7 +620,6 @@ function getSelectedLibraryRow() {
   );
 }
 
-/** Inserts the selected library image into the canvas. */
 function onLibraryInsertClick(): void {
   if (state.isBatchMode && state.batchFrames.length > 0) {
     showToast(
@@ -741,13 +630,12 @@ function onLibraryInsertClick(): void {
   }
   const row = getSelectedLibraryRow();
   if (!row?.imageUrl) { showToast('Select an image', true); return; }
-  const url = row.imageUrl;
   const pr = row.insertPrompt || 'Library image';
   const ratio = row.aspectRatio || '1:1';
   if (state.isReplaceMode && state.frameId) {
-    postToCode({ type: 'REPLACE_IMAGE', nodeId: state.frameId, imageUrl: getImageUrl(url) });
+    postToCode({ type: 'REPLACE_IMAGE', nodeId: state.frameId, imageUrl: getImageUrl(row.imageUrl) });
   } else {
-    postToCode({ type: 'INSERT_IMAGE', imageUrl: getImageUrl(url), prompt: pr, aspectRatio: ratio });
+    postToCode({ type: 'INSERT_IMAGE', imageUrl: getImageUrl(row.imageUrl), prompt: pr, aspectRatio: ratio });
   }
 }
 
@@ -756,16 +644,10 @@ function onLibraryBackClick(): void {
   showView('generator');
 }
 
-// =============================================================================
-// Zoom overlay
-// =============================================================================
-
 function isZoomOverlayOpen(): boolean {
-  const ov = document.getElementById('zoom-overlay');
-  return !!(ov?.classList.contains('is-open'));
+  return !!(document.getElementById('zoom-overlay')?.classList.contains('is-open'));
 }
 
-/** Opens the full-screen zoom viewer for results or library at a given index. */
 function openZoom(context: 'results' | 'library', index: number): void {
   const rows = context === 'library' ? state.libraryRows : state.generationResults;
   if (!rows.length) return;
@@ -793,22 +675,8 @@ function updateZoomNavState(): void {
   if (next) next.disabled = n <= 1;
 }
 
-// =============================================================================
-// postMessage handler (code.ts → UI)
-// =============================================================================
+// postMessage handlers — one function per message type from code.ts.
 
-// ---------------------------------------------------------------------------
-// Individual message handlers — one function per message type.
-// Each handler receives the full raw message object and mutates state / DOM.
-// ---------------------------------------------------------------------------
-
-/**
- * KEY_LOADED — Restores a saved API key from clientStorage.
- * Populates the input field, then validates the key:
- *   valid   → navigate to brand-select
- *   invalid → stay on setup with an inline error
- *   network → stay on setup with a network error
- */
 function handleKeyLoaded(msg: Record<string, unknown>): void {
   const input = document.getElementById('api-key-input') as HTMLInputElement | null;
   const key = msg.key != null ? String(msg.key) : '';
@@ -834,10 +702,6 @@ function handleKeyLoaded(msg: Record<string, unknown>): void {
     });
 }
 
-/**
- * BRAND_LOADED — Restores the persisted brand selection from clientStorage.
- * If the brand-select view is already open, highlights the matching card immediately.
- */
 function handleBrandLoaded(msg: Record<string, unknown>): void {
   state.savedBrandId = msg.brandId != null ? String(msg.brandId) : null;
   if (state.currentViewId !== 'brand-select' || !state.savedBrandId || state.selectedBrandId) return;
@@ -853,10 +717,6 @@ function handleBrandLoaded(msg: Record<string, unknown>): void {
   }
 }
 
-/**
- * FRAME_SELECTED — A single frame-like node is selected on the canvas.
- * Stores dimensions and name; disables replace and batch modes.
- */
 function handleFrameSelected(msg: Record<string, unknown>): void {
   state.frameWidth = typeof msg.width === 'number' ? msg.width : null;
   state.frameHeight = typeof msg.height === 'number' ? msg.height : null;
@@ -868,10 +728,6 @@ function handleFrameSelected(msg: Record<string, unknown>): void {
   renderFramePill();
 }
 
-/**
- * IMAGE_LAYER_SELECTED — A layer with an image fill is selected.
- * Activates replace mode: the next insert will overwrite this node's fill.
- */
 function handleImageLayerSelected(msg: Record<string, unknown>): void {
   state.isReplaceMode = true;
   state.isBatchMode = false;
@@ -883,10 +739,6 @@ function handleImageLayerSelected(msg: Record<string, unknown>): void {
   renderFramePill();
 }
 
-/**
- * MULTI_FRAME_SELECTED — Two or more frame-like nodes are selected.
- * Activates batch mode: Generate will produce one image per frame in series.
- */
 function handleMultiFrameSelected(msg: Record<string, unknown>): void {
   state.isReplaceMode = false;
   state.isBatchMode = true;
@@ -900,10 +752,6 @@ function handleMultiFrameSelected(msg: Record<string, unknown>): void {
   renderFramePill();
 }
 
-/**
- * NO_FRAME_SELECTED — Nothing useful is selected on the canvas.
- * Resets all selection state so the generator shows "No frame selected".
- */
 function handleNoFrameSelected(): void {
   state.frameWidth = null;
   state.frameHeight = null;
@@ -915,10 +763,6 @@ function handleNoFrameSelected(): void {
   renderFramePill();
 }
 
-/**
- * BATCH_COMPLETE — code.ts finished inserting all batch items.
- * Resolves the Promise that runBatchGeneration() is awaiting.
- */
 function handleBatchComplete(): void {
   if (state._batchWaitResolve) {
     state._batchWaitResolve();
@@ -927,10 +771,6 @@ function handleBatchComplete(): void {
   }
 }
 
-/**
- * BATCH_ERROR — code.ts encountered a fatal error during batch insert.
- * Rejects the Promise that runBatchGeneration() is awaiting, or shows a toast.
- */
 function handleBatchError(msg: Record<string, unknown>): void {
   const errorMessage = msg.message != null ? String(msg.message) : 'Batch failed';
   if (state._batchWaitReject) {
@@ -942,10 +782,6 @@ function handleBatchError(msg: Record<string, unknown>): void {
   }
 }
 
-/**
- * SELECTED_IMAGE_URL — code.ts extracted a canvas image fill as a data URL.
- * Stores it as the active style reference and updates the preview.
- */
 function handleSelectedImageUrl(msg: Record<string, unknown>): void {
   if (msg.dataUrl != null && String(msg.dataUrl) !== '') {
     state.styleReferenceDataUrl = String(msg.dataUrl);
@@ -953,11 +789,6 @@ function handleSelectedImageUrl(msg: Record<string, unknown>): void {
   }
 }
 
-/**
- * IMAGE_DATA_RESULT — code.ts fetched image bytes and converted them to a data URL.
- * Updates the matching thumbnail in the results or library grid.
- * Also stores the data URL back into state so insert operations use the cached version.
- */
 function handleImageDataResult(msg: Record<string, unknown>): void {
   const dataUrlStr = msg.dataUrl != null ? String(msg.dataUrl) : '';
   const imageIdStr = msg.imageId != null ? String(msg.imageId) : '';
@@ -971,7 +802,7 @@ function handleImageDataResult(msg: Record<string, unknown>): void {
     imgEl.src = dataUrlStr;
     imgEl.style.cssText =
       'display:block;width:100%;height:100%;object-fit:cover;position:relative;z-index:2';
-    // Remove the loading spinner and badge after the image is visible
+    // Remove the loading spinner once the image is painted
     setTimeout(() => {
       Array.from(cell.children).forEach((child) => {
         if (child !== imgEl) child.remove();
@@ -980,17 +811,13 @@ function handleImageDataResult(msg: Record<string, unknown>): void {
     }, 50);
   }
 
-  // Cache back into state so subsequent insert calls use the data URL directly
+  // Cache back into state so subsequent inserts use the data URL directly
   const result = state.generationResults.find((r) => String(r.id ?? '') === imageIdStr);
   if (result) result.imageUrl = dataUrlStr;
   const libRow = state.libraryRows.find((r) => String(r.id ?? '') === imageIdStr);
   if (libRow) libRow.imageUrl = dataUrlStr;
 }
 
-/**
- * IMAGE_DATA_ERROR — code.ts could not fetch or convert the image.
- * Marks the thumbnail cell as unavailable and shows a brief toast.
- */
 function handleImageDataError(msg: Record<string, unknown>): void {
   const failedId = msg.imageId != null ? String(msg.imageId) : '';
   if (failedId) markImageCellUnavailable(failedId);
@@ -998,26 +825,6 @@ function handleImageDataError(msg: Record<string, unknown>): void {
   if (fetchErr) showToast(`Could not load image preview: ${fetchErr}`, true);
 }
 
-// ---------------------------------------------------------------------------
-// Router — dispatches incoming postMessage payloads to the handlers above.
-// ---------------------------------------------------------------------------
-
-/**
- * Central postMessage handler for all messages from code.ts.
- *
- * Message types handled:
- *   KEY_LOADED, KEY_SAVED              — API key persistence
- *   BRAND_LOADED                       — brand persistence
- *   FRAME_SELECTED, IMAGE_LAYER_SELECTED,
- *   MULTI_FRAME_SELECTED, NO_FRAME_SELECTED — canvas selection state
- *   INSERT_SUCCESS, REPLACE_SUCCESS    — canvas insert confirmation
- *   BATCH_COMPLETE, BATCH_ERROR        — batch insert lifecycle
- *   INSERT_ERROR                       — single insert failure
- *   SELECTED_IMAGE_URL,
- *   SELECTED_IMAGE_URL_ERROR           — style reference capture
- *   IMAGE_DATA_RESULT, IMAGE_DATA_ERROR — CORS-free thumbnail fetch
- *   PLUGIN_ERROR                       — generic main-thread error
- */
 function onPluginMessage(event: MessageEvent): void {
   try {
     const msg = event.data?.pluginMessage as Record<string, unknown> | undefined;
@@ -1025,7 +832,7 @@ function onPluginMessage(event: MessageEvent): void {
 
     switch (msg.type) {
       case 'KEY_LOADED':              handleKeyLoaded(msg); break;
-      case 'KEY_SAVED':               break; // acknowledged — no UI action needed
+      case 'KEY_SAVED':               break;
       case 'BRAND_LOADED':            handleBrandLoaded(msg); break;
       case 'FRAME_SELECTED':          handleFrameSelected(msg); break;
       case 'IMAGE_LAYER_SELECTED':    handleImageLayerSelected(msg); break;
@@ -1060,23 +867,14 @@ function onPluginMessage(event: MessageEvent): void {
   }
 }
 
-// =============================================================================
-// Event listeners
-// =============================================================================
-
 function wireEvents(): void {
-  // --- setup view ---
   document.getElementById('btn-setup-connect')?.addEventListener('click', onConnectClick);
-  document.getElementById('btn-setup-back')?.addEventListener('click', () => {
-    postToCode({ type: 'CLOSE' });
-  });
+  document.getElementById('btn-setup-back')?.addEventListener('click', () => postToCode({ type: 'CLOSE' }));
 
-  // --- brand picker ---
   document.getElementById('btn-brand-add')?.addEventListener('click', () => void onAddBrandFromUrl());
   document.getElementById('btn-brand-continue')?.addEventListener('click', onBrandContinueClick);
   document.getElementById('btn-brand-back')?.addEventListener('click', () => showView('setup'));
 
-  // --- generator ---
   const promptInput = document.getElementById('prompt-input');
   if (promptInput) {
     promptInput.addEventListener('input', syncPromptUi);
@@ -1087,11 +885,9 @@ function wireEvents(): void {
   document.getElementById('btn-open-library')?.addEventListener('click', () => showView('library'));
   document.getElementById('btn-generator-back')?.addEventListener('click', () => showView('brand-select'));
 
-  // --- style reference ---
   document.getElementById('btn-style-ref-capture')?.addEventListener('click', onStyleRefCaptureClick);
   document.getElementById('btn-style-ref-clear')?.addEventListener('click', onStyleRefClearClick);
 
-  // --- results ---
   document.getElementById('btn-insert-selected')?.addEventListener('click', onInsertSelectedClick);
   document.getElementById('btn-new-generation')?.addEventListener('click', onNewGenerationClick);
   document.getElementById('btn-results-back')?.addEventListener('click', onNewGenerationClick);
@@ -1099,12 +895,10 @@ function wireEvents(): void {
   document.getElementById('btn-edit-toggle')?.addEventListener('click', onEditToggleClick);
   document.getElementById('btn-apply-edit')?.addEventListener('click', () => void onApplyEditClick());
 
-  // --- library ---
   document.getElementById('btn-library-insert')?.addEventListener('click', onLibraryInsertClick);
   document.getElementById('btn-library-load-more')?.addEventListener('click', () => void loadLibraryNextPage());
   document.getElementById('btn-library-back')?.addEventListener('click', onLibraryBackClick);
 
-  // --- zoom overlay ---
   document.getElementById('zoom-scrim')?.addEventListener('click', closeZoom);
   document.getElementById('zoom-close')?.addEventListener('click', closeZoom);
 
@@ -1133,7 +927,6 @@ function wireEvents(): void {
     }
   });
 
-  // --- global keyboard ---
   document.addEventListener('keydown', (ev: KeyboardEvent) => {
     if (ev.key === 'Escape' && isZoomOverlayOpen()) {
       ev.preventDefault();
@@ -1141,19 +934,10 @@ function wireEvents(): void {
     }
   });
 
-  // --- postMessage bridge ---
   window.addEventListener('message', onPluginMessage);
 }
 
-// =============================================================================
-// Bootstrap
-// =============================================================================
-
-/**
- * Entry point called once when the UI bundle loads.
- * Shows the setup view, wires all event listeners, then asks code.ts to
- * restore any persisted API key and brand from Figma client storage.
- */
+// Entry point called once by ui-styles.ts after DOMContentLoaded.
 export function init(): void {
   wireEvents();
   showView('setup');

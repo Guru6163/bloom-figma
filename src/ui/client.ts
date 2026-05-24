@@ -1,17 +1,8 @@
-/**
- * @file Bloom REST API client for the UI sandbox.
- *
- * Self-contained: uses only fetch + DOM APIs so it runs inside the Figma
- * plugin iframe without any Node.js or bundler dependencies.
- * Shapes match the Bloom OpenAPI 3.1.1 spec (keep in sync with bloom-api-schema.ts).
- */
+// Bloom REST API client for the plugin iframe.
+// Shapes match the Bloom OpenAPI 3.1.1 spec (keep in sync with bloom-api-schema.ts).
 
 const BLOOM_BASE = 'https://www.trybloom.ai/api/v1';
 const BLOOM_ORIGIN = 'https://www.trybloom.ai';
-
-// ---------------------------------------------------------------------------
-// Shared types
-// ---------------------------------------------------------------------------
 
 export interface Brand {
   id: string;
@@ -51,14 +42,7 @@ export interface LibraryPage {
   hasMore: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// URL helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Normalizes a Bloom image path or URL to an absolute https URL.
- * Returns an empty string for missing or invalid values.
- */
+// Normalizes a Bloom image path or URL to an absolute https URL.
 export function getImageUrl(raw: unknown): string {
   if (raw == null || typeof raw !== 'string') return '';
   const u = raw.trim();
@@ -68,10 +52,6 @@ export function getImageUrl(raw: unknown): string {
   if (u.startsWith('/')) return BLOOM_ORIGIN + u;
   return u;
 }
-
-// ---------------------------------------------------------------------------
-// Core HTTP
-// ---------------------------------------------------------------------------
 
 function extractErrorMessage(body: unknown): string | undefined {
   if (!body || typeof body !== 'object') return undefined;
@@ -114,15 +94,7 @@ async function bloomFetch(path: string, apiKey: string, options: RequestInit = {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Auth
-// ---------------------------------------------------------------------------
-
-/**
- * Validates an API key by attempting to list brands.
- * Returns true when valid, false for 4xx auth errors.
- * Throws for network failures.
- */
+// Returns true when valid, false for 4xx auth errors, throws for network failures.
 export function validateApiKey(apiKey: string): Promise<boolean> {
   return bloomFetch('/brands?limit=1', apiKey, { method: 'GET' })
     .then(() => true)
@@ -132,10 +104,6 @@ export function validateApiKey(apiKey: string): Promise<boolean> {
       return false;
     });
 }
-
-// ---------------------------------------------------------------------------
-// Brands
-// ---------------------------------------------------------------------------
 
 function normalizeBrand(raw: Record<string, unknown>): Brand {
   const id = String(raw.id ?? '');
@@ -159,7 +127,7 @@ function normalizeBrand(raw: Record<string, unknown>): Brand {
   };
 }
 
-/** GET /brands — fetches all pages via cursor pagination. */
+// GET /brands — fetches all pages via cursor pagination.
 export function listBrands(apiKey: string): Promise<Brand[]> {
   const out: Brand[] = [];
   let cursor: string | undefined;
@@ -183,7 +151,7 @@ export function listBrands(apiKey: string): Promise<Brand[]> {
   return fetchPage();
 }
 
-/** POST /brands — returns a provisional brand with status 'analyzing'. */
+// POST /brands — returns a provisional brand with status 'analyzing'.
 export function onboardBrand(apiKey: string, url: string): Promise<Brand> {
   return bloomFetch('/brands', apiKey, {
     method: 'POST',
@@ -202,18 +170,13 @@ export function onboardBrand(apiKey: string, url: string): Promise<Brand> {
   });
 }
 
-/** GET /brands/{id} */
 export function getBrand(apiKey: string, brandId: string): Promise<Brand> {
   return bloomFetch('/brands/' + encodeURIComponent(brandId), apiKey, { method: 'GET' }).then((raw) =>
     normalizeBrand((raw as { data: Record<string, unknown> }).data),
   );
 }
 
-// ---------------------------------------------------------------------------
-// Image generation & editing
-// ---------------------------------------------------------------------------
-
-/** POST /images/generations — returns new image ids for polling. */
+// POST /images/generations — returns new image ids for polling.
 export function generateImages(
   apiKey: string,
   brandSessionId: string,
@@ -228,7 +191,7 @@ export function generateImages(
   }).then((raw) => (raw as { data: { ids: string[] } }).data.ids);
 }
 
-/** POST /images/{id}/edit — returns a singleton id array for polling parity with generateImages. */
+// POST /images/{id}/edit — returns a singleton id array for polling parity with generateImages.
 export function editImage(
   apiKey: string,
   brandSessionId: string,
@@ -240,10 +203,6 @@ export function editImage(
     body: JSON.stringify({ brandSessionId, prompt: instruction }),
   }).then((raw) => [(raw as { data: { id: string } }).data.id]);
 }
-
-// ---------------------------------------------------------------------------
-// Image polling
-// ---------------------------------------------------------------------------
 
 function mapImagesForPolling(body: unknown): ImageRow[] {
   const b = body as { data: { images: Record<string, unknown>[] } };
@@ -262,11 +221,8 @@ function isTerminalStatus(s: string): boolean {
   return s === 'completed' || s === 'failed';
 }
 
-/**
- * Polls GET /images until all ids reach a terminal status.
- * Calls onProgress with 0–100 as images complete.
- * Rejects after 120 s or if any image fails.
- */
+// Polls GET /images until all ids reach a terminal status.
+// Calls onProgress with 0–100 as images complete. Rejects after 120 s or on failure.
 export function pollImages(
   apiKey: string,
   brandSessionId: string,
@@ -335,11 +291,7 @@ export function pollImages(
   return pollOnce();
 }
 
-// ---------------------------------------------------------------------------
-// Library
-// ---------------------------------------------------------------------------
-
-/** GET /images — one page of completed generated images for the Library view. */
+// GET /images — one page of completed generated images for the Library view.
 export function listBrandCompletedImagesPage(
   apiKey: string,
   brandSessionId: string,
@@ -358,7 +310,6 @@ export function listBrandCompletedImagesPage(
   );
 }
 
-/** Maps an image list row to the model used by the library grid. */
 export function mapListRowToLibraryItem(row: Record<string, unknown>): LibraryItem {
   const imageUrl =
     row.imageUrl != null && row.imageUrl !== '' ? getImageUrl(String(row.imageUrl)) : '';
@@ -373,11 +324,7 @@ export function mapListRowToLibraryItem(row: Record<string, unknown>): LibraryIt
   };
 }
 
-// ---------------------------------------------------------------------------
-// Credits
-// ---------------------------------------------------------------------------
-
-/** GET /credits — returns numeric balance, or MAX_SAFE_INTEGER when unlimited. */
+// GET /credits — returns numeric balance, or MAX_SAFE_INTEGER when unlimited.
 export function getCredits(apiKey: string): Promise<number> {
   return bloomFetch('/credits', apiKey, { method: 'GET' }).then((raw) => {
     const credits = (raw as { data: { unlimited?: boolean; balance: number } }).data;
